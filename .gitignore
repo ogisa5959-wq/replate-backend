@@ -1,0 +1,58 @@
+# Compiled output & build cache
+/dist
+/build
+*.tsbuildinfo
+
+# Dependencies
+/node_modules
+
+# Environment variables & secrets (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test coverage & test reports
+/coverage
+/.nyc_output
+junit.xml
+
+# IDEs & editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Runtime data & temporary directories
+pids
+*.pid
+*.seed
+*.pid.lock
+.temp
+.tmp
+
+# Docker local overrides
+docker-compose.override.yml

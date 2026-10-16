@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  replate-postgres:
+    image: postgres:16-alpine
+    container_name: replate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-replate_dev}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-replate_dev_secret}
+      POSTGRES_DB: ${DB_NAME:-replate_db}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - replate_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-replate_dev} -d ${DB_NAME:-replate_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  replate_pg_data:
+    name: replate_pg_data
