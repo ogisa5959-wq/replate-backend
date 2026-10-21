@@ -1,9 +1,8 @@
 # REPLATE Backend — Master Implementation Plan & Frontend Audit
 
 > [!NOTE]
-> **Status Perencanaan Ekstensi (Fase 9 s/d 12):** `DONE` (Telah Berhasil Dieksekusi & Teruji Penuh)
-> **Fase 13 (Sistem SOS Emergency Food Broadcast):** `PLANNED` (Desain final & siap dieksekusi)
-> Modul backend untuk Distribusi Darurat (Fase 9), Registrasi Akun Mandiri (Fase 10), Tombstone Deletion (Fase 11), dan Insiden Transit (Fase 12) telah diimplementasikan lengkap dengan 62 unit/integration tests lulus 100%. Saat ini direncanakan perluasan arsitektur SOS Broadcast terkoordinasi (Fase 13) untuk menjembatani permintaan darurat mitra dengan donor katering/restoran terdekat.
+> **Status Perencanaan Ekstensi (Fase 9 s/d 16):** Fase 9 s/d 16 `DONE` (112/112 tests backend passing 100%).
+> Modul backend untuk Distribusi Darurat (Fase 9), Registrasi Akun Mandiri (Fase 10), Tombstone Deletion (Fase 11), Insiden Transit (Fase 12), SOS Broadcast (Fase 13), Profile & Geolocation (Fase 14), Penargetan Geospasial SOS < 20 km (Fase 15), dan Perhitungan Jarak Geodetik Riil & Proximity Matching Engine Supplier-Mitra (Fase 16) telah selesai dan teruji penuh. Hasil evaluasi surplus kini menampilkan jarak fisik akurat (km), estimasi durasi transit (menit), dan koordinat geospasial kedua pihak tanpa ketergantungan API pihak ketiga.
 
 Dokumen ini memuat hasil audit menyeluruh terhadap kode sumber frontend **REPLATE**, inventaris fitur, pemetaan kebutuhan backend, analisis risiko teknis, serta *roadmap* implementasi bertahap untuk pengembangan backend NestJS dan PostgreSQL.
 
@@ -87,7 +86,10 @@ flowchart LR
     P9 --> P10["Fase 10: User Self-Register (DONE)"]
     P10 --> P11["Fase 11: Tombstone Deletion (DONE)"]
     P11 --> P12["Fase 12: In-Transit Incidents (DONE)"]
-    P12 --> P13["Fase 13: SOS Emergency Broadcast (PLANNED)"]
+    P12 --> P13["Fase 13: SOS Emergency Broadcast (DONE)"]
+    P13 --> P14["Fase 14: Profile & Geolocation (DONE)"]
+    P14 --> P15["Fase 15: Penargetan Geospasial SOS < 20 km (DONE)"]
+    P15 --> P16["Fase 16: Jarak Riil & Proximity Matching Engine (DONE)"]
 ```
 
 ---
@@ -473,11 +475,179 @@ flowchart LR
   - [x] Seluruh 12 skenario pengujian unit/integrasi baru dan 62 pengujian terdahulu lulus 100% (total 74/74 test backend hijau).
   - [x] Antarmuka frontend testing menampilkan badge navbar, halaman SOSHub, timer hitung mundur, dan alur konfirmasi tanpa error (73/73 test frontend hijau).
   - [x] Dokumentasi `FRONTEND_TESTING_CHANGELOG.md` dan `DECISIONS.md` telah disinkronkan.
-  - [ ] Seluruh endpoint siaran darurat terproteksi autentikasi JWT dan RBAC peran yang tepat.
-  - [ ] Operasi respon broadcast berjalan 100% atomik di dalam `$transaction`.
-  - [ ] Seluruh 12 skenario pengujian unit/integrasi baru dan 62 pengujian terdahulu lulus 100% (total 74+ test hijau).
-  - [ ] Antarmuka frontend testing menampilkan badge navbar, halaman SOSHub, timer hitung mundur, dan alur konfirmasi tanpa error.
-  - [ ] Dokumentasi `FRONTEND_TESTING_CHANGELOG.md` dan `DECISIONS.md` telah disinkronkan.
+
+---
+
+### Fase 14: Manajemen Profil Pengguna, Alamat, Geospasial & Keamanan Akun
+- **ID Tugas:** `TASK-014`
+- **Status:** `DONE`
+- **Tujuan & Ruang Lingkup:** Menyediakan fitur manajemen profil akun terpadu untuk pengguna REPLATE, mencakup pembaruan identitas pengguna, pengelolaan alamat fisik, penyimpanan titik koordinat geospasial (**Latitude & Longitude**) pada model `Organization` dan `RecipientProfile` (sebagai fondasi perhitungan jarak radius $\le 20\text{ km}$ via Haversine), pengaturan kapasitas & fasilitas operasional bagi mitra penerima, serta pembaruan kata sandi akun dengan enkripsi Argon2id.
+- **Dependensi:** `TASK-001` s/d `TASK-002` (Tabel `users`, `organizations`, `recipient_profiles`).
+- **Keputusan Desain & Batasan (Sesuai Konfirmasi User):**
+  - Email bersifat *read-only* (tidak dapat diubah melalui profil).
+  - Role bersifat permanen sesuai pendaftaran (*no role switching*), fokus pada spesifikasi operasional role aktif.
+- **Scope Fitur:**
+  - **Penyempurnaan Skema Prisma (`prisma/schema.prisma`):**
+    - Tambahkan kolom opsional `latitude` (`Decimal? @db.Decimal(9, 6)`), `longitude` (`Decimal? @db.Decimal(9, 6)`), dan `contactEmail` (`String? @db.VarChar(255)`) pada model `Organization`.
+    - Migrasi Prisma `add_org_geolocation_and_contact` dan perbarui data seed demo dengan koordinat valid area Jakarta.
+  - **Endpoint REST API Modul Profil (`/api/v1/profile`):**
+    - `GET /api/v1/profile`: Mengembalikan profil pengguna, detail organisasi, koordinat geospasial, dan profil spesifik (kapasitas/fasilitas jika MITRA).
+    - `PUT /api/v1/profile`: Memperbarui nama lengkap, nomor telepon kontak, nama organisasi, alamat fisik, koordinat `latitude`/`longitude`, serta fasilitas/kapasitas harian mitra (jika MITRA).
+    - `PUT /api/v1/profile/password`: Mengubah kata sandi akun dengan verifikasi Argon2id terhadap kata sandi lama, hashing kata sandi baru, dan pembatalan (*revocation*) refresh token aktif.
+  - **Shared Geolocation Utility:**
+    - Fungsi kalkulasi jarak geodetik bola bumi terisolasi (`haversine.util.ts`) dalam satuan kilometer.
+  - **Antarmuka Klien Sandbox (`replate-frontend (Copy for testing)/`):**
+    - Halaman baru `ProfileSettings.jsx` dengan 4 tab:
+      1. *Identitas & Kontak* (Nama, Email read-only, Telepon/WhatsApp).
+      2. *Alamat & Lokasi Geospasial* (Alamat, Latitude, Longitude, Tombol "📍 Ambil Lokasi Saya" via Geolocation browser API).
+      3. *Profil Operasional* (Jika Mitra: kapasitas kg, tipe penerima, kulkas/freezer, preferensi kategori; Jika Supplier: info usaha & alamat).
+      4. *Keamanan Akun* (Ubah Password).
+    - Integrasi dropdown avatar di `Navbar.jsx` mengarah ke `#profile`.
+    - Registrasi rute `'profile'` di `App.jsx`.
+    - Modul `api.profile` di `src/services/api.js` dan sinkronisasi ke `localStorage.USER_SESSION`.
+- **Deliverables:**
+  - `prisma/schema.prisma` dan migrasi database baru.
+  - `src/modules/profile/profile.module.ts`, `profile.controller.ts`, `profile.service.ts`, `dto/*`.
+  - `src/common/utils/haversine.util.ts`.
+  - `src/modules/profile/profile.spec.ts`.
+  - `src/pages/ProfileSettings.jsx`, update `Navbar.jsx`, `App.jsx`, `api.js` di sandbox testing.
+  - Pembaruan `backend/DATA_MODEL.md`, `backend/API_SPEC.md`, dan `.context/`.
+- **Wajib Ada Pengujian (11 Skenario Uji T-PROF-01 s/d T-PROF-11):**
+  1. `GET /profile` mengembalikan profil lengkap untuk SUPPLIER.
+  2. `GET /profile` mengembalikan profil lengkap dan `recipientProfile` untuk MITRA.
+  3. `PUT /profile` sukses memperbarui nama, nomor kontak, alamat, dan koordinat.
+  4. `PUT /profile` menolak latitude di luar rentang [-90, +90] (`400 Bad Request`).
+  5. `PUT /profile` menolak longitude di luar rentang [-180, +180] (`400 Bad Request`).
+  6. `PUT /profile` pada role MITRA otomatis memperbarui `RecipientProfile` (kapasitas, fasilitas, lat/long).
+  7. `PUT /profile/password` berhasil mengubah password dengan verifikasi password lama.
+  8. `PUT /profile/password` menolak jika password lama salah (`401 Unauthorized`).
+  9. `PUT /profile/password` menolak jika password baru kurang dari 6 karakter (`400 Bad Request`).
+  10. `PUT /profile/password` sukses membatalkan semua refresh token aktif pengguna.
+  11. `haversine.util.ts` menghitung jarak dua titik koordinat secara akurat.
+- **Kriteria Penerimaan / Definition of Done (DoD):**
+  - [x] Migrasi Prisma geolokasi organisasi berhasil diterapkan (`20261021142248_add_org_geolocation_and_contact`).
+  - [x] Seluruh endpoint profil terproteksi `JwtAuthGuard` dan beroperasi dalam transaksi `$transaction`.
+  - [x] Validasi range geospasial dan verifikasi Argon2id berjalan aman.
+  - [x] Seluruh 11 skenario pengujian baru dan 74 pengujian lama lulus 100% (total 85/85 tests backend hijau).
+  - [x] Antarmuka frontend sandbox menyediakan 4 tab interaktif, integrasi Geolocation browser, dan sinkronisasi lokal.
+  - [x] Dokumentasi `DATA_MODEL.md`, `API_SPEC.md`, `DECISIONS.md`, dan `.context/` telah disinkronkan.
+
+---
+
+### Fase 15: Penargetan Geospasial Sinyal SOS Darurat (< 20 km Berbasis Titik Koordinat Akun Riil)
+- **ID Tugas:** `TASK-015`
+- **Status:** `DONE`
+- **Tujuan & Ruang Lingkup:** Mengoptimalkan algoritma penyiaran darurat SOS (`EmergencyBroadcast`) agar tidak menyiarkan notifikasi ke seluruh penyedia surplus tanpa pandang bulu, melainkan menargetkan secara presisi hanya kepada penyedia surplus yang berjarak fisik **kurang dari 20 km (< 20 km)** dari lokasi posko bencana penerima, menggunakan data titik koordinat geospasial riil akun (`Organization.latitude` & `Organization.longitude`) yang dihitung dengan rumus Haversine. Menyediakan opsi input koordinat pada form pendaftaran akun mandiri (*Register*) agar akun baru langsung memiliki koordinat operasional terverifikasi.
+- **Dependensi:** `TASK-013` (SOS Broadcast System), `TASK-014` (Profile & Organization Geolocation, `haversine.util.ts`).
+- **Risiko Teknis & Mitigasi:**
+  - *Supplier tanpa data koordinat (NULL):* Pengguna lama atau baru yang belum mengeset lokasi geospasial berpotensi tidak mendapatkan notifikasi atau menyebabkan *runtime error* perhitungan matematis. Mitigasi: Validasi defensif pada `haversine.util.ts`, pengecekan keberadaan koordinat organisasi dengan fallback dukungan query parameter `?latitude=...&longitude=...` dari Geolocation browser, serta pesan peringatan informatif (*warning badge*) di UI jika lokasi belum dilengkapi.
+  - *Performa perhitungan jarak saat siaran melonjak:* Menghitung jarak ke puluhan supplier dalam memori aplikasi. Mitigasi: Filter awal berbasis status `ACTIVE` dan `expiresAt > NOW()` langsung di level PostgreSQL, diikuti kalkulasi Haversine in-memory berpresisi tinggi dengan $O(N)$ di mana $N$ dibatasi hanya untuk siaran aktif hari itu.
+  - *Bypass API dari supplier di luar radius:* Supplier berjarak 100 km memanggil endpoint `POST /respond` secara manual. Mitigasi: Validasi jarak ganda (*double-check verification*) di level service sebelum mengizinkan respon bantuan.
+- **Scope Fitur:**
+  - **Penyempurnaan Model Prisma & Skema Database:**
+    - Perbarui model `EmergencyBroadcast` dengan menambahkan kolom `latitude` (`Decimal? @db.Decimal(9, 6)`) dan `longitude` (`Decimal? @db.Decimal(9, 6)`) yang disalin langsung dari posko penerima saat tiket diterbitkan.
+    - Tetapkan default `radiusKm` pada model `EmergencyBroadcast` menjadi `20.0` (Decimal 5,2).
+    - Tambahkan migrasi Prisma: `add_broadcast_coordinates_and_default_radius`.
+  - **Dukungan Koordinat pada Pendaftaran Akun (`RegisterDto` & `AuthService`):**
+    - Tambahkan field opsional `latitude?: number`, `longitude?: number`, dan `address?: string` pada `RegisterDto`.
+    - Di `AuthService.register()`: Jika koordinat disertakan, simpan langsung ke `Organization.latitude` dan `Organization.longitude` (serta `RecipientProfile` jika role `MITRA`).
+  - **Penyempurnaan Algoritma `BroadcastService` (`broadcast.service.ts`):**
+    - `publishFromRequest()`: Menyalin `latitude` dan `longitude` posko penerima (dari `RecipientProfile`) serta `radiusKm: 20.0` ke dalam record `EmergencyBroadcast`.
+    - `findActive(user, queryCoords)`:
+      1. Ambil koordinat supplier dari `user.organization` (atau dari query `latitude`/`longitude`).
+      2. Kueri siaran `ACTIVE` yang belum kedaluwarsa.
+      3. Hitung jarak Haversine bola bumi ke tiap posko darurat: `distanceKm = calculateHaversineDistanceKm(...)`.
+      4. **Filter Geospasial Ketat:** Singkirkan siaran dengan `distanceKm >= 20.0 km` (atau `> broadcast.radiusKm`).
+      5. Sertakan nilai `distanceKm` pada respons JSON.
+      6. Urutkan hasil: berdasarkan `urgencyLevel` (`CRITICAL` $\to$ `HIGH` $\to$ `MEDIUM`), lalu `distanceKm` terdekat (*ascending*).
+      7. Khusus role `ADMIN`: Tetap dapat melihat seluruh siaran kota tanpa eliminasi radius.
+    - `respondToBroadcast()`: Verifikasi jarak supplier $\le 20\text{ km}$ sebelum mengizinkan penguncian atomik dan pembuatan journey (kecuali `ADMIN`).
+  - **Integrasi Frontend Testing Sandbox (`replate-frontend (Copy for testing)/`):**
+    - **Form Pendaftaran (`LoginModal.jsx`):** Tambahkan deteksi GPS instan atau input alamat/koordinat opsional pada tab registrasi.
+    - **Storage Local-First (`storage.js`):** Tambahkan kalkulasi Haversine pada `getActiveSOSBroadcasts(currentUser)` untuk memastikan filter radius 20 km berjalan konsisten baik dalam mode offline local-first maupun live backend API.
+    - **Indikator Navbar (`Navbar.jsx`):** Titik merah berkedip (*pulsing red dot*) hanya menyala jika terdapat siaran SOS aktif dalam radius $< 20\text{ km}$ dari posisi supplier.
+    - **Kartu SOS Hub (`SOSHub.jsx`):** Menampilkan badge jarak real-time: `📍 4.2 km dari dapur Anda` dan indikator `Radius Siaga: 20 km`.
+- **Deliverables:**
+  - Migrasi skema Prisma `add_broadcast_coordinates_and_default_radius`.
+  - Pembaruan `src/modules/auth/dto/register.dto.ts` & `auth.service.ts`.
+  - Pembaruan `src/modules/emergency/broadcast.service.ts`, `broadcast.controller.ts`.
+  - Test suites baru di `src/modules/emergency/emergency.spec.ts` dan `src/modules/auth/auth.spec.ts`.
+  - Pembaruan `LoginModal.jsx`, `storage.js`, `Navbar.jsx`, `SOSHub.jsx`, dan `test-sos-broadcast.js` di frontend testing sandbox.
+  - Sinkronisasi `API_SPEC.md`, `DATA_MODEL.md`, `DECISIONS.md`, dan `.context/`.
+- **Wajib Ada Pengujian (8 Skenario Uji T-GEO-01 s/d T-GEO-08):**
+  1. `POST /emergency-requests` otomatis membuat broadcast dengan `radiusKm: 20.0` dan koordinat posko penerima.
+  2. Supplier berjarak 3.5 km (< 20 km) sukses menerima siaran aktif dengan atribut `distanceKm: 3.5`.
+  3. Supplier berjarak 35.0 km (> 20 km) secara deterministik TIDAK menerima siaran tersebut (`activeBroadcasts` kosong).
+  4. Filter selektif: Saat ada dua posko (posko A jarak 7 km, posko B jarak 25 km), supplier hanya menerima notifikasi posko A.
+  5. Pengurutan siaran memprioritaskan tingkat kedaruratan (`CRITICAL`), lalu jarak terdekat (*nearest distance first*).
+  6. Admin dapat melihat seluruh siaran aktif kota tanpa eliminasi jarak.
+  7. Registrasi via `POST /auth/register` dengan koordinat sukses menyimpan geolokasi ke `Organization` dan `RecipientProfile`.
+  8. Respon bantuan dari supplier yang berada di luar radius 20 km ditolak dengan `400 Bad Request` / `422 Unprocessable Entity`.
+- **Kriteria Penerimaan / Definition of Done (DoD):**
+  - [x] Migrasi database Prisma berhasil diterapkan di PostgreSQL lokal (`20261021145435_add_broadcast_coordinates_and_default_radius`).
+  - [x] Algoritma penyaringan Haversine berjalan terisolasi dan akurat tanpa API eksternal.
+  - [x] Seluruh 8 skenario pengujian baru dan 86 pengujian backend sebelumnya lulus 100% (total 94/94 tests backend hijau).
+  - [x] Rangkaian pengujian frontend `test-sos-broadcast.js` memverifikasi filter radius < 20 km lulus 100% (12/12 skenario).
+  - [x] Antarmuka frontend testing menampilkan badge jarak akurat dan titik merah navbar hanya menyala untuk siaran < 20 km.
+  - [x] Dokumentasi arsitektur, API spesifikasi, dan data model tersinkronisasi.
+
+---
+
+### Fase 16: Perhitungan Jarak Geodetik Riil & Proximity Matching Engine (Supplier $\to$ Mitra)
+- **ID Tugas:** `TASK-016`
+- **Status:** `DONE`
+- **Tujuan & Ruang Lingkup:** Mengintegrasikan algoritma perhitungan jarak geodetik riil (rumus Haversine) ke dalam *core matching engine* REPLATE (`MatchingEngine`, `SurplusService`, `EmergencyService`, dan `JourneysService`) sehingga jarak fisik antara penyedia donasi (*supplier*) dan mitra penerima (*recipient/mitra*) dihitung dan ditampilkan secara presisi (km), lengkap dengan estimasi durasi penjemputan (menit) dan koordinat kedua belah pihak, tanpa memerlukan layanan peta eksternal berbayar.
+- **Dependensi:** `TASK-004` (Scoring & Matching Engine), `TASK-014` (Profile & Organization Geolocation, `haversine.util.ts`), `TASK-015` (Geospatial Targeting).
+- **Risiko Teknis & Mitigasi:**
+  - *Mitra atau Supplier Belum Memiliki Koordinat (NULL):* Jika koordinat kosong/absen, algoritma tidak boleh melempar error (*graceful fallback*). Mitigasi: `safeCalculateHaversineDistanceKm()` mengembalikan `null` secara defensif; `MatchingEngine` otomatis kembali ke bobot $50\% / 50\%$ untuk kategori pangan dan kapasitas, sedangkan `distanceKm` ditampilkan `null` tanpa merusak UI.
+  - *Pelanggaran Food Safety Gate oleh Jarak Dekat:* Mitra yang sangat dekat tidak boleh menerima makanan berstatus `REJECT` atau `REVIEW`. Mitigasi: Status evaluasi keamanan pangan tetap menjadi gerbang mutlak pertama. Jika FSG $\ne$ `PASS`, daftar `matches` otomatis kosong `[]`.
+- **Scope Fitur:**
+  - **Utilitas Geodesik Terpadu (`haversine.util.ts`):**
+    - `safeCalculateHaversineDistanceKm(lat1, lon1, lat2, lon2): number | null`: Perhitungan jarak geodetik bola bumi defensif dengan validasi rentang latitude $[-90, 90]$ dan longitude $[-180, 180]$.
+    - `estimateTransitMinutes(distanceKm: number | null): number`: Estimasi waktu tempuh penjemputan berbasis kecepatan logistik perkotaan 20 km/jam ditambah *handover buffer* 5 menit ($\ge 10$ menit).
+    - `calculateProximityScore(distanceKm: number | null): number`: Penilaian kedekatan geografis ($\le 3\text{ km} \to 100$, $3\text{--}7\text{ km} \to 85$, $7\text{--}15\text{ km} \to 65$, $15\text{--}25\text{ km} \to 40$, $>25\text{ km} \to 20$, `null` $\to 70$).
+  - **Penyempurnaan Matching Engine (`matching.engine.ts`):**
+    - Menerima `donorCoords` (`latitude` & `longitude`).
+    - Formula skor: $\text{matchScore} = \operatorname{round}(\text{categoryScore} \times 0.40 + \text{capacityScore} \times 0.35 + \text{proximityScore} \times 0.25)$.
+    - Menghasilkan output kandidat lengkap: `distanceKm`, `estimatedTransitMinutes`, `destinationLatitude`, `destinationLongitude`, `supplierLatitude`, `supplierLongitude`.
+    - Narasi `rationale` dinamis mencakup jarak: `"Jarak ke mitra: X km (estimasi penjemputan ~Y mnt)"`.
+    - Pengurutan kandidat: `matchScore` *descending*, dengan *tie-breaker* `distanceKm` *ascending* (mitra lebih dekat diprioritaskan saat skor imbang).
+  - **Surplus Service & Controller (`surplus.service.ts` & `surplus.controller.ts`):**
+    - `getAssessment(id)`: Mengambil koordinat organisasi donor dari relasi database dan meneruskannya ke `MatchingEngine.match()`. Mengembalikan `donorOrganization` lengkap dengan koordinat.
+    - Endpoint baru `GET /api/v1/surplus-listings/:id/matches`: Mengembalikan array kandidat mitra yang cocok dengan informasi jarak dan koordinat.
+  - **Emergency Service (`emergency.service.ts`):**
+    - `findMatchingSurplus(id, user)`: Menghitung jarak antara posko bencana mitra dan gudang donor surplus, serta mengurutkan donasi terdekat (*nearest distance first*).
+  - **Journeys Service (`journeys.service.ts`):**
+    - `assignDestination()`: Menghitung `distanceKm` dan `estimatedTransitMinutes` riil, menyimpannya ke record perjalanan dan timeline event.
+    - `findAll()` dan `findOne()`: Menyematkan `distanceKm` dinamis pada entitas perjalanan (*Journey*).
+- **Deliverables:**
+  - `src/common/utils/haversine.util.ts` & `src/common/utils/haversine.util.spec.ts`
+  - `src/modules/engines/matching.engine.ts`
+  - `src/modules/surplus/surplus.service.ts` & `surplus.controller.ts`
+  - `src/modules/emergency/emergency.service.ts`
+  - `src/modules/journeys/journeys.service.ts`
+  - Pembaruan pengujian `food-safety-gate.spec.ts`, `surplus.spec.ts`, `emergency.spec.ts`, `journeys.spec.ts`.
+  - Pembaruan dokumentasi `API_SPEC.md`, `.context/backend-modules/04-rescue-matching.md`, dan `PLAN.md`.
+- **Wajib Ada Pengujian (18 Skenario Uji Baru):**
+  1. `haversine.util.ts` menghitung jarak geodetik valid (Monas ke Bundaran HI $\approx 2.37$ km).
+  2. `safeCalculateHaversineDistanceKm` menangani koordinat `null`, `undefined`, atau tidak valid secara aman.
+  3. `estimateTransitMinutes` menghasilkan durasi logistik realistis dengan batas minimal 10 menit.
+  4. `calculateProximityScore` memberikan bobot skor kedekatan bertingkat secara akurat.
+  5. `MatchingEngine` menghitung `distanceKm` dan `estimatedTransitMinutes` riil untuk setiap kandidat mitra.
+  6. `MatchingEngine` memprioritaskan mitra berjarak fisik lebih dekat saat skor kategori dan kapasitas imbang.
+  7. `MatchingEngine` tetap deterministik memblokir seluruh pencocokan saat Food Safety Gate `REJECT` atau `REVIEW`.
+  8. `MatchingEngine` fallback aman ke bobot 50%/50% ketika donor tidak memiliki koordinat.
+  9. `GET /surplus-listings/:id/assessment` mengembalikan daftar kandidat mitra dengan `distanceKm` dan durasi transit.
+  10. `GET /surplus-listings/:id/matches` mengembalikan kandidat mitra dengan koordinat lengkap.
+  11. `emergency.service.ts` (`findMatchingSurplus`) mengurutkan donasi terdekat terlebih dahulu untuk tanggap bencana.
+  12. `journeys.service.ts` (`assignDestination`) merekam `estimatedTransitMinutes` dan event timeline dengan estimasi penjemputan riil.
+- **Kriteria Penerimaan / Definition of Done (DoD):**
+  - [x] Rumus Haversine terintegrasi menyeluruh pada core Matching Engine tanpa library/API pihak ketiga.
+  - [x] Endpoint `GET /surplus-listings/:id/assessment` dan `GET /surplus-listings/:id/matches` mengembalikan `distanceKm`, `estimatedTransitMinutes`, serta koordinat supplier dan mitra.
+  - [x] Filter Food Safety Gate tetap terisolasi dan tidak dapat di-bypass oleh kedekatan geografis.
+  - [x] Seluruh 18 skenario pengujian baru dan 94 pengujian backend sebelumnya lulus 100% (total 112/112 tests backend hijau).
+  - [x] Build NestJS (`nest build`) sukses tanpa error kompilasi TypeScript.
+  - [x] Dokumentasi `API_SPEC.md`, `PLAN.md`, dan `.context/backend-modules/04-rescue-matching.md` telah disinkronkan.
 
 ---
 

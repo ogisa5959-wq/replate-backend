@@ -14,6 +14,10 @@ import { CapacityService } from '../recipients/capacity.service';
 import { BroadcastService } from './broadcast.service';
 import { AuthenticatedUser } from '@/common/decorators/current-user.decorator';
 import {
+  safeCalculateHaversineDistanceKm,
+  estimateTransitMinutes,
+} from '@/common/utils/haversine.util';
+import {
   EmergencyRequestStatus,
   EmergencyUrgencyLevel,
   UserRole,
@@ -155,8 +159,15 @@ export class EmergencyService {
   async findMatchingSurplus(id: string, user: AuthenticatedUser) {
     const emergencyRequest = await this.findOne(id);
 
+    const poskoLat: number | null = emergencyRequest.recipient?.latitude
+      ? Number(emergencyRequest.recipient.latitude)
+      : (emergencyRequest.recipient?.organization?.latitude ? Number(emergencyRequest.recipient.organization.latitude) : null);
+    const poskoLon: number | null = emergencyRequest.recipient?.longitude
+      ? Number(emergencyRequest.recipient.longitude)
+      : (emergencyRequest.recipient?.organization?.longitude ? Number(emergencyRequest.recipient.organization.longitude) : null);
+
     // Hard Gate: only match listings where Food Safety Gate is PASS and route is REDISTRIBUTE or PROCESS
-    return this.prisma.surplusListing.findMany({
+    const listings = await this.prisma.surplusListing.findMany({
       where: {
         isDeleted: false,
         currentLifecycleStatus: {
@@ -183,6 +194,40 @@ export class EmergencyService {
         { scoreAssessment: { totalScore: 'desc' } },
         { createdAt: 'asc' },
       ],
+    });
+
+    const mapped = listings.map((listing) => {
+      const donorLat = listing.donorOrganization?.latitude !== null && listing.donorOrganization?.latitude !== undefined
+        ? Number(listing.donorOrganization.latitude)
+        : null;
+      const donorLon = listing.donorOrganization?.longitude !== null && listing.donorOrganization?.longitude !== undefined
+        ? Number(listing.donorOrganization.longitude)
+        : null;
+
+      const distanceKm = safeCalculateHaversineDistanceKm(poskoLat, poskoLon, donorLat, donorLon);
+      const estimatedTransitMinutes = distanceKm !== null ? estimateTransitMinutes(distanceKm) : null;
+
+      return {
+        ...listing,
+        distanceKm,
+        estimatedTransitMinutes,
+      };
+    });
+
+    // Sort by nearest distance first; if distance tied or not available, sort by totalScore desc
+    return mapped.sort((a, b) => {
+      if (a.distanceKm !== null && b.distanceKm !== null) {
+        if (a.distanceKm !== b.distanceKm) {
+          return a.distanceKm - b.distanceKm;
+        }
+      } else if (a.distanceKm !== null && b.distanceKm === null) {
+        return -1;
+      } else if (a.distanceKm === null && b.distanceKm !== null) {
+        return 1;
+      }
+      const scoreA = Number(a.scoreAssessment?.totalScore || 0);
+      const scoreB = Number(b.scoreAssessment?.totalScore || 0);
+      return scoreB - scoreA;
     });
   }
 

@@ -96,6 +96,16 @@ export class SurplusController {
     };
   }
 
+  @Get(':id/matches')
+  @ApiOperation({ summary: 'Daftar mitra penampung cocok terurut jarak dan kapasitas' })
+  async getMatches(@Param('id') id: string) {
+    const matches = await this.surplusService.getMatches(id);
+    return {
+      success: true,
+      data: matches,
+    };
+  }
+
   @Put(':id/safety-parameters')
   @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
   @ApiOperation({ summary: 'Evaluasi ulang parameter keselamatan jika berstatus REVIEW' })

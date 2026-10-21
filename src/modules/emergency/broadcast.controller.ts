@@ -5,12 +5,13 @@ import {
   Patch,
   Param,
   Body,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { BroadcastService } from './broadcast.service';
 import { RespondBroadcastDto } from './dto/respond-broadcast.dto';
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
@@ -28,10 +29,23 @@ export class BroadcastController {
 
   @Get('active')
   @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Daftar siaran darurat SOS aktif untuk penyedia surplus' })
-  @ApiResponse({ status: 200, description: 'Daftar siaran SOS aktif' })
-  async findActive(@CurrentUser() user: AuthenticatedUser) {
-    const broadcasts = await this.broadcastService.findActive(user);
+  @ApiOperation({ summary: 'Daftar siaran darurat SOS aktif untuk penyedia surplus (filter radius < 20 km)' })
+  @ApiQuery({ name: 'latitude', required: false, type: Number, description: 'Koordinat lintang opsional' })
+  @ApiQuery({ name: 'longitude', required: false, type: Number, description: 'Koordinat bujur opsional' })
+  @ApiResponse({ status: 200, description: 'Daftar siaran SOS aktif terdekat' })
+  async findActive(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('latitude') latitude?: string,
+    @Query('longitude') longitude?: string,
+  ) {
+    const latNum = latitude !== undefined && latitude !== '' ? parseFloat(latitude) : undefined;
+    const lonNum = longitude !== undefined && longitude !== '' ? parseFloat(longitude) : undefined;
+    const queryCoords =
+      latNum !== undefined && lonNum !== undefined && !isNaN(latNum) && !isNaN(lonNum)
+        ? { latitude: latNum, longitude: lonNum }
+        : undefined;
+
+    const broadcasts = await this.broadcastService.findActive(user, queryCoords);
     return {
       success: true,
       data: broadcasts,

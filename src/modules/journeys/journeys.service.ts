@@ -13,6 +13,10 @@ import { ConfirmReceiptDto } from './dto/confirm-receipt.dto';
 import { CancelJourneyDto } from './dto/cancel-journey.dto';
 import { AuthenticatedUser } from '@/common/decorators/current-user.decorator';
 import {
+  safeCalculateHaversineDistanceKm,
+  estimateTransitMinutes,
+} from '@/common/utils/haversine.util';
+import {
   JourneyStatus,
   ListingLifecycleStatus,
   UserRole,
@@ -38,6 +42,7 @@ export class JourneysService {
     const listing = await this.prisma.surplusListing.findUnique({
       where: { id: listingId },
       include: {
+        donorOrganization: true,
         safetyAssessment: true,
       },
     });
@@ -88,6 +93,23 @@ export class JourneysService {
 
     const qtyKg = Number(listing.quantityKg);
 
+    // Calculate geodetic distance and estimated transit time
+    const donorLat = listing.donorOrganization?.latitude !== null && listing.donorOrganization?.latitude !== undefined
+      ? Number(listing.donorOrganization.latitude)
+      : null;
+    const donorLon = listing.donorOrganization?.longitude !== null && listing.donorOrganization?.longitude !== undefined
+      ? Number(listing.donorOrganization.longitude)
+      : null;
+    const recipientLat = recipient.latitude !== null && recipient.latitude !== undefined
+      ? Number(recipient.latitude)
+      : (recipient.organization?.latitude ? Number(recipient.organization.latitude) : null);
+    const recipientLon = recipient.longitude !== null && recipient.longitude !== undefined
+      ? Number(recipient.longitude)
+      : (recipient.organization?.longitude ? Number(recipient.organization.longitude) : null);
+
+    const distanceKm = safeCalculateHaversineDistanceKm(donorLat, donorLon, recipientLat, recipientLon);
+    const estimatedTransitMinutes = distanceKm !== null ? estimateTransitMinutes(distanceKm) : null;
+
     // Atomic transaction with pessimistic row locking on recipient capacity
     return this.prisma.$transaction(async (tx) => {
       // 1. Reserve recipient capacity with SELECT ... FOR UPDATE
@@ -105,16 +127,21 @@ export class JourneysService {
           listingId,
           recipientId: dto.recipientId,
           currentStatus: JourneyStatus.MATCHED,
+          estimatedTransitMinutes,
           notes: dto.notes,
         },
       });
+
+      const distanceNote = distanceKm !== null
+        ? ` Jarak pengiriman: ${distanceKm} km (estimasi tiba ~${estimatedTransitMinutes} mnt).`
+        : '';
 
       // 4. Record initial timeline event
       await tx.journeyTimelineEvent.create({
         data: {
           journeyId: journey.id,
           status: JourneyStatus.MATCHED,
-          note: `Mitra penampung dikonfirmasi: ${recipient.organization.name}. Kuota ${qtyKg} kg dicadangkan.`,
+          note: `Mitra penampung dikonfirmasi: ${recipient.organization.name}.${distanceNote} Kuota ${qtyKg} kg dicadangkan.`,
           actorUserId: user.id,
         },
       });
@@ -131,6 +158,8 @@ export class JourneysService {
             listingId,
             recipientId: dto.recipientId,
             status: JourneyStatus.MATCHED,
+            distanceKm,
+            estimatedTransitMinutes,
           },
           reason: 'Penetapan mitra penampung dan penguncian kuota kapasitas',
         },
@@ -138,13 +167,36 @@ export class JourneysService {
 
       return {
         ...journey,
+        distanceKm,
+        estimatedTransitMinutes,
         recipient: {
           id: recipient.id,
           organizationName: recipient.organization.name,
           recipientType: recipient.recipientType,
+          latitude: recipientLat,
+          longitude: recipientLon,
         },
       };
     });
+  }
+
+  private attachDistanceToJourney<T extends { listing?: any; recipient?: any }>(journey: T): T & { distanceKm: number | null } {
+    const donor = journey.listing?.donorOrganization;
+    const recipient = journey.recipient;
+    const donorLat = donor?.latitude !== null && donor?.latitude !== undefined ? Number(donor.latitude) : null;
+    const donorLon = donor?.longitude !== null && donor?.longitude !== undefined ? Number(donor.longitude) : null;
+    const recLat = recipient?.latitude !== null && recipient?.latitude !== undefined
+      ? Number(recipient.latitude)
+      : (recipient?.organization?.latitude ? Number(recipient.organization.latitude) : null);
+    const recLon = recipient?.longitude !== null && recipient?.longitude !== undefined
+      ? Number(recipient.longitude)
+      : (recipient?.organization?.longitude ? Number(recipient.organization.longitude) : null);
+
+    const distanceKm = safeCalculateHaversineDistanceKm(donorLat, donorLon, recLat, recLon);
+    return {
+      ...journey,
+      distanceKm,
+    };
   }
 
   async findAll(params: {
@@ -175,7 +227,7 @@ export class JourneysService {
       if (params.donorId) where.listing = { donorOrganizationId: params.donorId };
     }
 
-    return this.prisma.rescueJourney.findMany({
+    const journeys = await this.prisma.rescueJourney.findMany({
       where,
       include: {
         listing: {
@@ -194,6 +246,8 @@ export class JourneysService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    return journeys.map((j) => this.attachDistanceToJourney(j));
   }
 
   async findOne(id: string, user: AuthenticatedUser) {
@@ -229,7 +283,7 @@ export class JourneysService {
       throw new ForbiddenException('Akses ditolak: perjalanan ini tidak ditujukan ke mitra Anda');
     }
 
-    return journey;
+    return this.attachDistanceToJourney(journey);
   }
 
   async advanceStatus(id: string, dto: AdvanceStatusDto, user: AuthenticatedUser) {

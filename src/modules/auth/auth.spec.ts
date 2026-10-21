@@ -177,5 +177,28 @@ describe('AuthService (Integration)', () => {
         }),
       ).rejects.toThrow('Pendaftaran role ADMIN tidak diizinkan melalui registrasi publik');
     });
+
+    it('should save geocoordinates and address when provided during registration', async () => {
+      const geoEmail = `geo_${Date.now()}@replate.id`;
+      const result = await authService.register({
+        username: 'geo_supplier',
+        email: geoEmail,
+        password: 'Password123!',
+        name: 'Geo Owner',
+        organizationName: 'Geo Resto',
+        role: 'SUPPLIER' as any,
+        address: 'Jl. Merdeka No. 45, Jakarta',
+        latitude: -6.2150,
+        longitude: 106.8200,
+      });
+
+      expect(result).toBeDefined();
+      const org = await prisma.organization.findUnique({
+        where: { id: result.user.organization.id },
+      });
+      expect(org!.address).toBe('Jl. Merdeka No. 45, Jakarta');
+      expect(Number(org!.latitude)).toBeCloseTo(-6.2150, 4);
+      expect(Number(org!.longitude)).toBeCloseTo(106.8200, 4);
+    });
   });
 });

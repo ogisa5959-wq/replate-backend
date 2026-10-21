@@ -312,4 +312,86 @@ describe('REPLATE Food Safety Gate & Route Engine (13 Mandatory Scenarios)', () 
     expect(result.alternativeRouteRecommendation?.route).toBe(RouteHierarchy.SAFE_DISPOSAL);
     expect(result.reasons.some((r) => r.toLowerCase().includes('kemasan'))).toBe(true);
   });
+
+  // Scenario 14: MatchingEngine Geodesic Distance Calculation
+  it('Scenario 14: MatchingEngine calculates distanceKm and estimatedTransitMinutes when donorCoords provided', () => {
+    const donorCoords = { latitude: -6.208763, longitude: 106.818573 }; // Grand Sahid Sudirman
+    const matches = MatchingEngine.match({
+      foodCategory: FoodCategory.COOKED_MEALS,
+      quantityKg: 20,
+      recommendedRoute: RouteHierarchy.REDISTRIBUTE,
+      candidates: [dummyCandidateKitchen],
+      donorCoords,
+    });
+
+    expect(matches.length).toBe(1);
+    expect(matches[0].distanceKm).toBeDefined();
+    expect(matches[0].distanceKm).not.toBeNull();
+    expect(matches[0].distanceKm).toBeCloseTo(3.0, 1);
+    expect(matches[0].estimatedTransitMinutes).toBeDefined();
+    expect(matches[0].estimatedTransitMinutes).toBeGreaterThanOrEqual(10);
+    expect(matches[0].supplierLatitude).toBe(-6.208763);
+    expect(matches[0].destinationLatitude).toBe(dummyCandidateKitchen.latitude);
+    expect(matches[0].rationale.some((r) => r.includes('Jarak ke mitra:'))).toBe(true);
+  });
+
+  // Scenario 15: Proximity Prioritization
+  it('Scenario 15: MatchingEngine prioritizes closer recipient when capacity and category are identical', () => {
+    const donorCoords = { latitude: -6.2088, longitude: 106.8456 }; // At Matraman
+
+    const closeKitchen: RecipientCandidate = {
+      id: 'rec-close',
+      name: 'Dapur Tetangga Dekat (1 km)',
+      organizationId: 'org-close',
+      recipientType: RecipientType.COMMUNITY_KITCHEN,
+      acceptedFoodCategories: [FoodCategory.COOKED_MEALS],
+      dailyMaxCapacityKg: 100,
+      availableCapacityKg: 50,
+      latitude: -6.215,
+      longitude: 106.848, // ~0.7 km away
+    };
+
+    const farKitchen: RecipientCandidate = {
+      id: 'rec-far',
+      name: 'Dapur Jauh (20 km)',
+      organizationId: 'org-far',
+      recipientType: RecipientType.COMMUNITY_KITCHEN,
+      acceptedFoodCategories: [FoodCategory.COOKED_MEALS],
+      dailyMaxCapacityKg: 100,
+      availableCapacityKg: 50,
+      latitude: -6.38,
+      longitude: 106.83, // ~19 km away
+    };
+
+    const matches = MatchingEngine.match({
+      foodCategory: FoodCategory.COOKED_MEALS,
+      quantityKg: 20,
+      recommendedRoute: RouteHierarchy.REDISTRIBUTE,
+      candidates: [farKitchen, closeKitchen], // Far listed first in input
+      donorCoords,
+    });
+
+    expect(matches.length).toBe(2);
+    // Closer kitchen must rank first due to proximityScore
+    expect(matches[0].recipientId).toBe('rec-close');
+    expect(matches[1].recipientId).toBe('rec-far');
+    expect(matches[0].matchScore).toBeGreaterThan(matches[1].matchScore);
+    expect(matches[0].distanceKm!).toBeLessThan(matches[1].distanceKm!);
+  });
+
+  // Scenario 16: Safe Fallback without Donor Coordinates
+  it('Scenario 16: MatchingEngine operates safely with null donorCoords using neutral distance fallback', () => {
+    const matches = MatchingEngine.match({
+      foodCategory: FoodCategory.COOKED_MEALS,
+      quantityKg: 20,
+      recommendedRoute: RouteHierarchy.REDISTRIBUTE,
+      candidates: [dummyCandidateKitchen],
+      donorCoords: null,
+    });
+
+    expect(matches.length).toBe(1);
+    expect(matches[0].distanceKm).toBeNull();
+    expect(matches[0].estimatedTransitMinutes).toBeNull();
+    expect(matches[0].matchScore).toBeGreaterThan(0);
+  });
 });

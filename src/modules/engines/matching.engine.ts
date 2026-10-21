@@ -1,5 +1,10 @@
 import { RecipientType, FoodCategory, RouteHierarchy } from '@prisma/client';
 import { FoodSafetyResult } from './food-safety-gate.engine';
+import {
+  safeCalculateHaversineDistanceKm,
+  estimateTransitMinutes,
+  calculateProximityScore,
+} from '../../common/utils/haversine.util';
 
 export interface RecipientCandidate {
   id: string;
@@ -19,6 +24,10 @@ export interface MatchingInput {
   recommendedRoute: RouteHierarchy | 'PENDING_VERIFICATION';
   foodSafetyGate?: FoodSafetyResult | null;
   candidates: RecipientCandidate[];
+  donorCoords?: {
+    latitude?: number | null;
+    longitude?: number | null;
+  } | null;
 }
 
 export interface MatchedRecipient {
@@ -31,6 +40,12 @@ export interface MatchedRecipient {
   isLockedForReview: boolean;
   canAssign: boolean;
   rationale: string[];
+  distanceKm: number | null;
+  estimatedTransitMinutes: number | null;
+  destinationLatitude: number;
+  destinationLongitude: number;
+  supplierLatitude: number | null;
+  supplierLongitude: number | null;
 }
 
 export class MatchingEngine {
@@ -39,6 +54,9 @@ export class MatchingEngine {
     const fsg = input.foodSafetyGate;
     const isReject = fsg?.status === 'REJECT';
     const isReview = fsg?.status === 'REVIEW';
+
+    const donorLat = input.donorCoords?.latitude ?? null;
+    const donorLon = input.donorCoords?.longitude ?? null;
 
     // If REJECT: check alternative route
     if (isReject) {
@@ -51,21 +69,47 @@ export class MatchingEngine {
         (c) => c.recipientType === RecipientType.COMPOST_FACILITY,
       );
 
-      return compostCandidates.map((c) => ({
-        recipientId: c.id,
-        organizationId: c.organizationId,
-        name: c.name,
-        recipientType: c.recipientType,
-        matchScore: 90,
-        availableCapacityKg: c.availableCapacityKg,
-        isLockedForReview: false,
-        canAssign: true,
-        rationale: [
+      return compostCandidates.map((c) => {
+        const distanceKm = safeCalculateHaversineDistanceKm(
+          donorLat,
+          donorLon,
+          c.latitude,
+          c.longitude,
+        );
+        const transitMinutes = distanceKm !== null ? estimateTransitMinutes(distanceKm) : null;
+
+        const rationale: string[] = [
           isId
             ? 'Fasilitas daur ulang organik kompos berizin.'
             : 'Certified organic composting facility.',
-        ],
-      }));
+        ];
+
+        if (distanceKm !== null) {
+          rationale.push(
+            isId
+              ? `Jarak ke fasilitas kompos: ${distanceKm} km (estimasi ~${transitMinutes} mnt)`
+              : `Distance to compost facility: ${distanceKm} km (est. ~${transitMinutes} mins)`,
+          );
+        }
+
+        return {
+          recipientId: c.id,
+          organizationId: c.organizationId,
+          name: c.name,
+          recipientType: c.recipientType,
+          matchScore: 90,
+          availableCapacityKg: c.availableCapacityKg,
+          isLockedForReview: false,
+          canAssign: true,
+          rationale,
+          distanceKm,
+          estimatedTransitMinutes: transitMinutes,
+          destinationLatitude: c.latitude,
+          destinationLongitude: c.longitude,
+          supplierLatitude: donorLat !== null ? Number(donorLat) : null,
+          supplierLongitude: donorLon !== null ? Number(donorLon) : null,
+        };
+      });
     }
 
     // For human consumption routes (PASS or REVIEW):
@@ -95,7 +139,21 @@ export class MatchingEngine {
         capacityScore = 30;
       }
 
-      const rawScore = Math.round(categoryScore * 0.5 + capacityScore * 0.5);
+      // 3. Proximity / Distance Calculation
+      const distanceKm = safeCalculateHaversineDistanceKm(
+        donorLat,
+        donorLon,
+        c.latitude,
+        c.longitude,
+      );
+      const transitMinutes = distanceKm !== null ? estimateTransitMinutes(distanceKm) : null;
+      const proximityScore = calculateProximityScore(distanceKm);
+
+      // Weighted score: 40% category + 35% capacity + 25% proximity (or 50/50 fallback if no donor coords)
+      const rawScore = donorLat !== null && donorLon !== null
+        ? Math.round(categoryScore * 0.40 + capacityScore * 0.35 + proximityScore * 0.25)
+        : Math.round(categoryScore * 0.50 + capacityScore * 0.50);
+
       const isLocked = isReview || false;
       const canAssign = !isLocked && c.availableCapacityKg >= input.quantityKg;
 
@@ -117,6 +175,14 @@ export class MatchingEngine {
         );
       }
 
+      if (distanceKm !== null) {
+        rationale.push(
+          isId
+            ? `Jarak ke mitra: ${distanceKm} km (estimasi penjemputan ~${transitMinutes} mnt)`
+            : `Distance to partner: ${distanceKm} km (est. transit ~${transitMinutes} mins)`,
+        );
+      }
+
       if (isLocked) {
         rationale.push(
           isId
@@ -135,10 +201,24 @@ export class MatchingEngine {
         isLockedForReview: isLocked,
         canAssign,
         rationale,
+        distanceKm,
+        estimatedTransitMinutes: transitMinutes,
+        destinationLatitude: c.latitude,
+        destinationLongitude: c.longitude,
+        supplierLatitude: donorLat !== null ? Number(donorLat) : null,
+        supplierLongitude: donorLon !== null ? Number(donorLon) : null,
       };
     });
 
-    // Sort by matchScore descending
-    return scored.sort((a, b) => b.matchScore - a.matchScore);
+    // Sort by matchScore descending; if tied, prioritize nearest distance
+    return scored.sort((a, b) => {
+      if (b.matchScore !== a.matchScore) {
+        return b.matchScore - a.matchScore;
+      }
+      if (a.distanceKm !== null && b.distanceKm !== null) {
+        return a.distanceKm - b.distanceKm;
+      }
+      return 0;
+    });
   }
 }

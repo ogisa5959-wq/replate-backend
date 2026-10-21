@@ -10,6 +10,7 @@ import {
 import { PrismaService } from '@/prisma/prisma.service';
 import { RespondBroadcastDto } from './dto/respond-broadcast.dto';
 import { AuthenticatedUser } from '@/common/decorators/current-user.decorator';
+import { calculateHaversineDistanceKm } from '@/common/utils/haversine.util';
 import {
   BroadcastStatus,
   SupplierResponseStatus,
@@ -58,12 +59,24 @@ export class BroadcastService {
   async publishFromRequest(request: EmergencyFoodRequest & { recipient?: { organization?: { name: string } } }) {
     try {
       let recipientOrgName = request.recipient?.organization?.name;
+      let poskoLatitude: number | null = null;
+      let poskoLongitude: number | null = null;
+
+      const recipientProfile = await this.prisma.recipientProfile.findUnique({
+        where: { id: request.recipientId },
+        include: { organization: true },
+      });
+
       if (!recipientOrgName) {
-        const recipientProfile = await this.prisma.recipientProfile.findUnique({
-          where: { id: request.recipientId },
-          include: { organization: true },
-        });
         recipientOrgName = recipientProfile?.organization?.name || 'Mitra Posko Darurat';
+      }
+
+      if (recipientProfile?.latitude && recipientProfile?.longitude) {
+        poskoLatitude = Number(recipientProfile.latitude);
+        poskoLongitude = Number(recipientProfile.longitude);
+      } else if (recipientProfile?.organization?.latitude && recipientProfile?.organization?.longitude) {
+        poskoLatitude = Number(recipientProfile.organization.latitude);
+        poskoLongitude = Number(recipientProfile.organization.longitude);
       }
 
       const expiresAt = this.calculateExpiry(request.urgencyLevel);
@@ -76,6 +89,8 @@ export class BroadcastService {
           emergencyRequestId: request.id,
           recipientOrgName,
           recipientLocation: request.targetLocation,
+          latitude: poskoLatitude,
+          longitude: poskoLongitude,
           neededFoodType: request.neededFoodType,
           foodTypeName: request.foodTypeName,
           requestedPortions: request.requestedPortions,
@@ -85,7 +100,7 @@ export class BroadcastService {
           urgencyReason: request.urgencyReason,
           contactPerson: request.contactPerson,
           contactPhone: request.contactPhone,
-          radiusKm: 10.0,
+          radiusKm: 20.0,
           expiresAt,
           status: BroadcastStatus.ACTIVE,
         },
@@ -120,10 +135,41 @@ export class BroadcastService {
   }
 
   /**
-   * Retrieve active emergency broadcasts for suppliers
+   * Retrieve active emergency broadcasts for suppliers with geospatial targeting (< 20 km)
    */
-  async findActive(user: AuthenticatedUser) {
+  async findActive(
+    user: AuthenticatedUser,
+    queryCoords?: { latitude?: number; longitude?: number },
+  ) {
     await this.expireStaleBroadcasts();
+
+    // 1. Determine supplier coordinates (priority: queryCoords > user.organization in DB)
+    let supplierLat: number | null = null;
+    let supplierLon: number | null = null;
+
+    if (
+      queryCoords?.latitude !== undefined &&
+      queryCoords?.longitude !== undefined &&
+      !isNaN(queryCoords.latitude) &&
+      !isNaN(queryCoords.longitude)
+    ) {
+      supplierLat = Number(queryCoords.latitude);
+      supplierLon = Number(queryCoords.longitude);
+    } else if (user.organizationId) {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: user.organizationId },
+        select: { latitude: true, longitude: true },
+      });
+      if (
+        org?.latitude !== null &&
+        org?.latitude !== undefined &&
+        org?.longitude !== null &&
+        org?.longitude !== undefined
+      ) {
+        supplierLat = Number(org.latitude);
+        supplierLon = Number(org.longitude);
+      }
+    }
 
     const broadcasts = await this.prisma.emergencyBroadcast.findMany({
       where: {
@@ -140,6 +186,12 @@ export class BroadcastService {
             status: true,
             beneficiaryGroup: true,
             beneficiaryCount: true,
+            recipient: {
+              select: {
+                latitude: true,
+                longitude: true,
+              },
+            },
           },
         },
       },
@@ -149,10 +201,73 @@ export class BroadcastService {
       ],
     });
 
-    return broadcasts.map((b) => ({
-      ...b,
-      hasResponded: b.supplierResponses.length > 0,
-    }));
+    const results: any[] = [];
+
+    for (const b of broadcasts) {
+      const hasResponded = b.supplierResponses.length > 0;
+      const poskoLat =
+        b.latitude !== null && b.latitude !== undefined
+          ? Number(b.latitude)
+          : b.emergencyRequest?.recipient?.latitude
+          ? Number(b.emergencyRequest.recipient.latitude)
+          : null;
+
+      const poskoLon =
+        b.longitude !== null && b.longitude !== undefined
+          ? Number(b.longitude)
+          : b.emergencyRequest?.recipient?.longitude
+          ? Number(b.emergencyRequest.recipient.longitude)
+          : null;
+
+      let distanceKm: number | null = null;
+      if (
+        supplierLat !== null &&
+        supplierLon !== null &&
+        poskoLat !== null &&
+        poskoLon !== null
+      ) {
+        try {
+          distanceKm = calculateHaversineDistanceKm(poskoLat, poskoLon, supplierLat, supplierLon);
+        } catch {
+          distanceKm = null;
+        }
+      }
+
+      const allowedRadius = Number(b.radiusKm) || 20.0;
+
+      // Filter: if user is SUPPLIER and both coordinates are known, exclude if distance exceeds allowed radius (< 20 km)
+      if (user.role === UserRole.SUPPLIER && distanceKm !== null && distanceKm > allowedRadius) {
+        continue;
+      }
+
+      results.push({
+        ...b,
+        hasResponded,
+        distanceKm,
+        requiresLocationSetup: supplierLat === null || supplierLon === null,
+      });
+    }
+
+    // Sort: 1. Urgency Level, 2. distanceKm asc (nulls last), 3. createdAt desc
+    results.sort((a, b) => {
+      const urgencyRank: Record<string, number> = {
+        CRITICAL: 1,
+        HIGH: 2,
+        MEDIUM: 3,
+      };
+      const rankDiff = (urgencyRank[a.urgencyLevel] || 99) - (urgencyRank[b.urgencyLevel] || 99);
+      if (rankDiff !== 0) return rankDiff;
+
+      if (a.distanceKm !== null && b.distanceKm !== null) {
+        return a.distanceKm - b.distanceKm;
+      }
+      if (a.distanceKm !== null && b.distanceKm === null) return -1;
+      if (a.distanceKm === null && b.distanceKm !== null) return 1;
+
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    return results;
   }
 
   /**
@@ -210,6 +325,43 @@ export class BroadcastService {
         throw new UnprocessableEntityException(
           'Siaran darurat telah melewati batas waktu (kedaluwarsa) dan tidak dapat lagi direspons',
         );
+      }
+
+      // 1.5 Validate physical distance (< 20 km) if user is SUPPLIER and coordinates exist
+      if (user.role === UserRole.SUPPLIER && user.organizationId) {
+        const suppOrg = await tx.organization.findUnique({
+          where: { id: user.organizationId },
+          select: { latitude: true, longitude: true },
+        });
+
+        const bcast = await tx.emergencyBroadcast.findUnique({
+          where: { id: broadcastId },
+          select: { latitude: true, longitude: true, radiusKm: true },
+        });
+
+        if (
+          suppOrg?.latitude !== null &&
+          suppOrg?.latitude !== undefined &&
+          suppOrg?.longitude !== null &&
+          suppOrg?.longitude !== undefined &&
+          bcast?.latitude !== null &&
+          bcast?.latitude !== undefined &&
+          bcast?.longitude !== null &&
+          bcast?.longitude !== undefined
+        ) {
+          const distKm = calculateHaversineDistanceKm(
+            Number(bcast.latitude),
+            Number(bcast.longitude),
+            Number(suppOrg.latitude),
+            Number(suppOrg.longitude),
+          );
+          const maxRadius = Number(bcast.radiusKm) || 20.0;
+          if (distKm > maxRadius) {
+            throw new BadRequestException(
+              `Lokasi dapur Anda berjarak ${distKm} km dari posko, melebihi batas radius tanggap darurat (${maxRadius} km)`,
+            );
+          }
+        }
       }
 
       // 2. Prevent duplicate responses from the same supplier organization

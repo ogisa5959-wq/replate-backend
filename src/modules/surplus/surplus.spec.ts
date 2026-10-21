@@ -120,6 +120,19 @@ describe('SurplusService & ExpiryWorker (Integration)', () => {
     expect(assessment.listingId).toBe(created.id);
     expect(assessment.matches).toBeDefined();
     expect(Array.isArray(assessment.matches)).toBe(true);
+    expect(assessment.donorOrganization).toBeDefined();
+
+    if (assessment.matches.length > 0) {
+      const firstMatch = assessment.matches[0];
+      expect(firstMatch.distanceKm).toBeDefined();
+      expect(firstMatch.estimatedTransitMinutes).toBeDefined();
+      expect(firstMatch.destinationLatitude).toBeDefined();
+      expect(firstMatch.destinationLongitude).toBeDefined();
+    }
+
+    const matchesDirect = await surplusService.getMatches(created.id);
+    expect(Array.isArray(matchesDirect)).toBe(true);
+    expect(matchesDirect.length).toBe(assessment.matches.length);
   });
 
   it('should allow supplier to update safety parameters if status was REVIEW', async () => {

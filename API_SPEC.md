@@ -93,14 +93,51 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
 
 ## 3. Modul 1: Autentikasi & Akun Pengguna (`/api/v1/auth`)
 
+### 3.0. Daftar Akun Default Purbalingga (1 Admin, 4 Mitra, 4 Supplier)
+Seluruh data database telah di-reset bersih ke wilayah **Kabupaten Purbalingga, Jawa Tengah**. Semua akun menggunakan kata sandi default: **`password123`** (juga kompatibel dengan `admin123`, `supplier123`, `mitra123`). Pengguna dapat login menggunakan `email` atau `identifier`/username alias.
+
+| Kategori | Nama Akun / Organisasi | Username Alias | Email Resmi | Password | Koordinat (Lat, Lon) | Jarak ke Alun-Alun Kota |
+|---|---|---|---|---|---|---|
+| **ADMIN** | BPBD & Bappeda Purbalingga | `admin` / `admin-purbalingga` | `admin@replate.id` | `password123` | `-7.388000, 109.364500` | 0.05 km |
+| **MITRA 1** | Dapur Sosial Alun-Alun Purbalingga | `purbalingga-kota` / `mitra-kota` | `mitra@replate.id` | `password123` | `-7.387500, 109.363900` | Pusat Kota |
+| **MITRA 2** | Posko Pangan & Dapur Kalimanah | `purbalingga-kalimanah` / `mitra-kalimanah` | `purbalingga-kalimanah@replate.id` | `password123` | `-7.395000, 109.330000` | ~3.8 km |
+| **MITRA 3** | Bank Makanan & Dapur Dhuafa Bobotsari | `purbalingga-bobotsari` / `mitra-bobotsari` | `purbalingga-bobotsari@replate.id` | `password123` | `-7.305000, 109.375000` | ~9.2 km |
+| **MITRA 4** | Posko Tanggap Bencana Karangreja (Lereng Gn. Slamet) | `purbalingga-karangreja` / `mitra-karangreja` | `purbalingga-karangreja@replate.id` | `password123` | `-7.195000, 109.325000` | **~21.8 km (> 20 km)** |
+| **SUPPLIER 1** | CV Surya Katering Purbalingga Kota | `supplier-kota` / `supplier` | `supplier@replate.id` | `password123` | `-7.385000, 109.360000` | 0.51 km dari Mitra 1 |
+| **SUPPLIER 2** | Toko Roti & Bakery Berkah Kalimanah | `supplier-kalimanah` | `supplier-kalimanah@replate.id` | `password123` | `-7.400000, 109.335000` | 3.48 km dari Mitra 1 |
+| **SUPPLIER 3** | Dapur Resto & Katering Bobotsari | `supplier-bobotsari` | `supplier-bobotsari@replate.id` | `password123` | `-7.300000, 109.380000` | 9.89 km dari Mitra 1 |
+| **SUPPLIER 4** | Resto Agrowisata Lembah Asri Karangreja | `supplier-karangreja` | `supplier-karangreja@replate.id` | `password123` | `-7.190000, 109.330000` | **22.28 km dari Mitra 1 (> 20 km)** |
+
+#### Matriks Uji Jarak Fisik & Penerimaan Notifikasi SOS (< 20 km vs > 20 km)
+Gunakan matriks ini untuk memverifikasi logika filter geospasial pada UI frontend:
+- **Kasus 1: Mitra 1 (Purbalingga Kota) menerbitkan sinyal darurat SOS:**
+  - $\to$ Supplier 1 (Kota, 0.51 km): **Diterima** ($\le 20\text{ km}$, Proximity 100).
+  - $\to$ Supplier 2 (Kalimanah, 3.48 km): **Diterima** ($\le 20\text{ km}$, Proximity 85).
+  - $\to$ Supplier 3 (Bobotsari, 9.89 km): **Diterima** ($\le 20\text{ km}$, Proximity 65).
+  - $\to$ Supplier 4 (Karangreja, 22.28 km): **DITOLAK / TIDAK MUNCUL** ($> 20\text{ km}$, di luar radius darurat).
+- **Kasus 2: Mitra 4 (Posko Bencana Karangreja di Lereng Gunung Slamet) menerbitkan SOS:**
+  - $\to$ Supplier 4 (Karangreja, 0.78 km): **Diterima** ($\le 20\text{ km}$, terdekat).
+  - $\to$ Supplier 3 (Bobotsari, 13.16 km): **Diterima** ($\le 20\text{ km}$).
+  - $\to$ Supplier 1 (Kota, 21.48 km): **DITOLAK / TIDAK MUNCUL** ($> 20\text{ km}$).
+  - $\to$ Supplier 2 (Kalimanah, 22.82 km): **DITOLAK / TIDAK MUNCUL** ($> 20\text{ km}$).
+
+---
+
 ### 3.1. `POST /api/v1/auth/login`
 - **Tujuan:** Autentikasi pengguna menggunakan username/email dan password.
 - **Role:** Publik.
-- **Request Body:**
+- **Request Body (Mendukung `identifier` maupun `email`):**
   ```json
   {
-    "identifier": "supplier",
-    "password": "supplier123"
+    "identifier": "purbalingga-karangreja",
+    "password": "password123"
+  }
+  ```
+  *atau:*
+  ```json
+  {
+    "email": "purbalingga-karangreja@replate.id",
+    "password": "password123"
   }
   ```
 - **Response `200 OK`:**
@@ -110,22 +147,20 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
     "statusCode": 200,
     "data": {
       "user": {
-        "id": "c1f8a847-8a1e-48a5-b1a7-0e6e8a000001",
-        "username": "supplier",
-        "email": "catering@replate.id",
-        "fullName": "Dapur Grand Catering",
-        "role": "SUPPLIER",
-        "avatarIcon": "🏪",
+        "id": "10000000-0000-0000-0000-000000000024",
+        "email": "purbalingga-karangreja@replate.id",
+        "fullName": "Relawan Posko Bencana (Karangreja)",
+        "role": "MITRA",
         "organization": {
-          "id": "org-grand-catering-01",
-          "name": "PT Boga Berkah Katering",
-          "type": "SUPPLIER"
+          "id": "00000000-0000-0000-0000-000000000024",
+          "name": "Posko Tanggap Bencana Karangreja (Lereng Gn. Slamet)",
+          "type": "RECIPIENT"
         }
       },
       "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
       "expiresInSeconds": 900
     },
-    "meta": { "timestamp": "2026-10-15T14:48:00.000Z" }
+    "meta": { "timestamp": "2026-10-21T15:50:00.000Z" }
   }
   ```
 - **Set-Cookie:** `refreshToken=...; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth; Max-Age=604800`
@@ -317,7 +352,7 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
 ---
 
 ### 5.4. `GET /api/v1/surplus-listings/:id/assessment`
-- **Tujuan:** Endpoint yang dipanggil oleh halaman `Assessment.jsx` untuk memuat rincian kartu Food Safety Gate, kalkulasi Rescue Score, rute rekomendasi, dan alasan evaluasi.
+- **Tujuan:** Endpoint yang dipanggil oleh halaman `Assessment.jsx` untuk memuat rincian kartu Food Safety Gate, kalkulasi Rescue Score, rute rekomendasi, koordinat donatur, dan daftar kandidat mitra cocok terurut jarak (`distanceKm`).
 - **Role:** Terautentikasi (pemilik listing atau Admin).
 - **Response `200 OK`:**
   ```json
@@ -326,34 +361,60 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
     "statusCode": 200,
     "data": {
       "listingId": "7a3e5c9b-6b21-4f12-88d3-7d8b9e000101",
-      "foodSafetyGate": {
-        "status": "PASS",
-        "eligibleForConsumptionRecommendation": true,
-        "headline": "LOLOS PEMERIKSAAN AWAL KEAMANAN PANGAN",
-        "summary": "Berdasarkan parameter yang dilaporkan, memenuhi standar baseline.",
-        "reasons": [],
-        "missingInformation": []
+      "foodName": "Roti Manis",
+      "quantityKg": 8,
+      "portions": 20,
+      "donorOrganization": {
+        "id": "10000000-0000-0000-0000-000000000001",
+        "name": "Grand Sahid Catering & Hotel",
+        "latitude": -6.208763,
+        "longitude": 106.818573
       },
-      "rescueAssessment": {
-        "score": 92,
-        "priority": "HIGH PRIORITY",
-        "recommendedRoute": "REDISTRIBUTE",
-        "rationale": "Surplus ini memperoleh Skor Penyelamatan 92/100...",
-        "breakdown": {
-          "condition": { "score": 88, "weight": 0.3, "contribution": 26.4 },
-          "urgency": { "score": 90, "weight": 0.25, "contribution": 22.5 },
-          "quantity": { "score": 95, "weight": 0.15, "contribution": 14.3 },
-          "distributionEase": { "score": 82, "weight": 0.15, "contribution": 12.3 },
-          "destinationCompatibility": { "score": 95, "weight": 0.15, "contribution": 14.3 }
+      "safetyAssessment": {
+        "safetyStatus": "PASS",
+        "gateReasons": []
+      },
+      "scoreAssessment": {
+        "totalScore": 92,
+        "recommendedRoute": "REDISTRIBUTE"
+      },
+      "matches": [
+        {
+          "recipientId": "20000000-0000-0000-0000-000000000001",
+          "organizationId": "00000000-0000-0000-0000-000000000003",
+          "name": "Dapur Sosial Barokah Matraman",
+          "recipientType": "COMMUNITY_KITCHEN",
+          "matchScore": 96,
+          "availableCapacityKg": 50,
+          "isLockedForReview": false,
+          "canAssign": true,
+          "distanceKm": 3.0,
+          "estimatedTransitMinutes": 14,
+          "destinationLatitude": -6.2088,
+          "destinationLongitude": 106.8456,
+          "supplierLatitude": -6.208763,
+          "supplierLongitude": 106.818573,
+          "rationale": [
+            "Menerima kategori BAKERY_PASTRY",
+            "Kapasitas sisa (50 kg) mencukupi kebutuhan (8 kg)",
+            "Jarak ke mitra: 3 km (estimasi penjemputan ~14 mnt)"
+          ]
         }
-      }
+      ]
     }
   }
   ```
 
 ---
 
-### 5.5. `PUT /api/v1/surplus-listings/:id/safety-parameters`
+### 5.5. `GET /api/v1/surplus-listings/:id/matches`
+- **Tujuan:** Mengambil daftar kandidat mitra cocok terurut skor dan jarak geospasial (kompatibel langsung dengan `api.surplus.getMatches(id)`).
+- **Role:** Terautentikasi (`SUPPLIER`, `ADMIN`).
+- **Response `200 OK`:** Array of `MatchedRecipient` (identik dengan array `matches` pada `assessment`).
+
+---
+
+### 5.6. `PUT /api/v1/surplus-listings/:id/safety-parameters`
 - **Tujuan:** Memperbarui parameter keselamatan makanan (misal saat melengkapi data yang berstatus `REVIEW` via `EditSafetyModal.jsx`).
 - **Role:** `SUPPLIER` (pemilik listing), `ADMIN`.
 - **Efek:** Mengevaluasi ulang Food Safety Gate dan menghitung ulang `safeUntilTimestamp`.
@@ -579,7 +640,7 @@ Modul ini melayani fitur **Pusat Permintaan Pangan Mendesak (`EmergencyDistribut
 ---
 
 ### 10.4. `GET /api/v1/emergency-requests/:id/matching-surplus`
-- **Tujuan:** Mengidentifikasi kandidat surplus aktif yang dapat memenuhi permohonan darurat ini.
+- **Tujuan:** Mengidentifikasi kandidat surplus aktif yang dapat memenuhi permohonan darurat ini, terurut dari lokasi donor terdekat (`distanceKm` ascending).
 - **Role:** `MITRA` (pemilik permohonan), `ADMIN`.
 - **Aturan Ketat Keamanan Pangan (Food Safety Guardrail):**
   - Surplus listing **Wajib berstatus `PASS`** pada Food Safety Gate.
@@ -587,6 +648,9 @@ Modul ini melayani fitur **Pusat Permintaan Pangan Mendesak (`EmergencyDistribut
   - Rute rekomendasi wajib layak konsumsi manusia (`REDISTRIBUTE` atau `PROCESS`).
   - Status listing saat ini harus `REPORTED` atau `ASSESSED`.
   - Waktu aman belum kedaluwarsa (`safeUntilTimestamp > NOW()`).
+- **Atribut Geospasial Response:**
+  - Setiap listing diperkaya dengan field `distanceKm` (jarak geodetik Haversine ke posko dalam km) dan `estimatedTransitMinutes` (estimasi waktu tiba kurir).
+  - Diurutkan dari donor terdekat untuk mempercepat respons penanggulangan bencana.
 
 ---
 
@@ -700,3 +764,115 @@ Modul ini melayani fitur **Pusat Permintaan Pangan Mendesak (`EmergencyDistribut
 ### 11.4. `PATCH /api/v1/emergency-broadcasts/:broadcastId/status`
 - **Tujuan:** Pengaturan status siaran darurat administratif.
 - **Role:** `ADMIN`.
+
+---
+
+## 12. Modul 9: Pengaturan Profil, Alamat & Keamanan Akun (`/api/v1/profile`)
+
+Modul ini melayani fitur **Manajemen Profil Pengguna, Alamat Fisik, Koordinat Geospasial (Latitude & Longitude), dan Keamanan Akun (`ProfileSettings.jsx`)**.
+
+### 12.1. `GET /api/v1/profile`
+- **Tujuan:** Mengambil data profil lengkap pengguna yang sedang login beserta data organisasi, koordinat geospasial, dan spesifikasi fasilitas (jika role `MITRA`).
+- **Role:** Terautentikasi (`ADMIN`, `SUPPLIER`, `MITRA`).
+- **Response `200 OK`:**
+  ```json
+  {
+    "success": true,
+    "statusCode": 200,
+    "data": {
+      "user": {
+        "id": "10000000-0000-0000-0000-000000000003",
+        "email": "mitra@replate.id",
+        "fullName": "Ahmad Pengelola Dapur",
+        "role": "MITRA",
+        "isActive": true,
+        "createdAt": "2026-10-21T08:00:00.000Z",
+        "updatedAt": "2026-10-21T14:30:00.000Z"
+      },
+      "organization": {
+        "id": "00000000-0000-0000-0000-000000000003",
+        "name": "Dapur Sosial Barokah Matraman",
+        "type": "RECIPIENT",
+        "address": "Jl. Matraman Raya No. 42, Jakarta Timur",
+        "contactPhone": "0812-3456-7890",
+        "contactEmail": "dapur@barokah.org",
+        "latitude": -6.2088,
+        "longitude": 106.8456,
+        "isVerified": true
+      },
+      "recipientProfile": {
+        "id": "20000000-0000-0000-0000-000000000001",
+        "recipientType": "COMMUNITY_KITCHEN",
+        "dailyMaxCapacityKg": 100,
+        "hasRefrigeration": true,
+        "hasFreezer": true,
+        "acceptedFoodCategories": ["COOKED_MEALS", "BAKERY_PASTRY", "FRESH_PRODUCE"],
+        "latitude": -6.2088,
+        "longitude": 106.8456
+      }
+    }
+  }
+  ```
+
+---
+
+### 12.2. `PUT /api/v1/profile`
+- **Tujuan:** Memperbarui data pengguna, nama organisasi, nomor narahubung, alamat fisik, titik koordinat geospasial, serta spesifikasi operasional penerima.
+- **Role:** Terautentikasi (`ADMIN`, `SUPPLIER`, `MITRA`).
+- **Request Body:**
+  ```json
+  {
+    "fullName": "Ahmad Pengelola Posko Dapur",
+    "organizationName": "Dapur Barokah Matraman",
+    "address": "Jl. Matraman Raya No. 50, Jakarta Timur",
+    "contactPhone": "0812-3456-7890",
+    "contactEmail": "dapur@barokah.org",
+    "latitude": -6.208800,
+    "longitude": 106.845600,
+    "recipientProfile": {
+      "recipientType": "COMMUNITY_KITCHEN",
+      "dailyMaxCapacityKg": 100,
+      "hasRefrigeration": true,
+      "hasFreezer": true,
+      "acceptedFoodCategories": ["COOKED_MEALS", "BAKERY_PASTRY", "FRESH_PRODUCE"]
+    }
+  }
+  ```
+- **Validasi Server:**
+  - `latitude`: Rentang valid $-90.0 \le \text{lat} \le 90.0$.
+  - `longitude`: Rentang valid $-180.0 \le \text{lon} \le 180.0$.
+  - `recipientProfile.dailyMaxCapacityKg`: Minimal $1\text{ kg}$.
+- **Efek Basis Data:**
+  - Berjalan dalam transaksi `$transaction`.
+  - Sinkronisasi otomatis koordinat `latitude` dan `longitude` dari `Organization` ke `RecipientProfile` (jika role `MITRA`).
+  - Pembaruan kuota `RecipientCapacity.maxCapacityKg` dan `availableCapacityKg` hari ini jika kapasitas harian diubah.
+  - Pencatatan `AuditLog` dengan aksi `UPDATE` pada tabel `users`.
+- **Response `200 OK`:** Data profil lengkap yang telah diperbarui.
+
+---
+
+### 12.3. `PUT /api/v1/profile/password`
+- **Tujuan:** Mengubah kata sandi akun pengguna dengan verifikasi kata sandi lama dan enkripsi Argon2id.
+- **Role:** Terautentikasi (`ADMIN`, `SUPPLIER`, `MITRA`).
+- **Request Body:**
+  ```json
+  {
+    "currentPassword": "passwordLama123",
+    "newPassword": "passwordBaruRahasia456!"
+  }
+  ```
+- **Validasi Server:**
+  - `currentPassword`: Wajib diverifikasi dengan hash tersimpan di database via `argon2.verify()`.
+  - `newPassword`: Minimal 6 karakter dan tidak boleh identik dengan kata sandi saat ini.
+- **Efek Basis Data:**
+  - Hash kata sandi baru menggunakan algoritma Argon2id.
+  - Pencabutan (*revocation*) seluruh sesi `RefreshToken` aktif pengguna (`isRevoked = true`).
+  - Pencatatan `AuditLog` tanpa membocorkan kata sandi mentah maupun hash.
+- **Response `200 OK`:**
+  ```json
+  {
+    "success": true,
+    "statusCode": 200,
+    "message": "Kata sandi berhasil diperbarui. Silakan gunakan kata sandi baru untuk sesi berikutnya."
+  }
+  ```

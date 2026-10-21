@@ -81,6 +81,10 @@ describe('JourneysService (Lifecycle, Concurrency & Doorstep Rejection)', () => 
 
     expect(journey.id).toBeDefined();
     expect(journey.currentStatus).toBe(JourneyStatus.MATCHED);
+    expect(journey.distanceKm).toBeDefined();
+    expect(journey.distanceKm).not.toBeNull();
+    expect(journey.estimatedTransitMinutes).toBeDefined();
+    expect(journey.estimatedTransitMinutes).toBeGreaterThanOrEqual(10);
 
     // Verify listing is now MATCHED
     const updatedListing = await prisma.surplusListing.findUnique({

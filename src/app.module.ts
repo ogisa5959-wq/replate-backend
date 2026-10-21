@@ -11,6 +11,7 @@ import { JourneysModule } from './modules/journeys/journeys.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { EmergencyModule } from './modules/emergency/emergency.module';
+import { ProfileModule } from './modules/profile/profile.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { EmergencyModule } from './modules/emergency/emergency.module';
     AnalyticsModule,
     AdminModule,
     EmergencyModule,
+    ProfileModule,
   ],
   controllers: [AppController],
   providers: [],

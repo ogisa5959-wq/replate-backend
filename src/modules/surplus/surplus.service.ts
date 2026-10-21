@@ -314,12 +314,20 @@ export class SurplusService {
         : 'ambient_room_temp',
     });
 
+    const donorLat = listing.donorOrganization?.latitude
+      ? Number(listing.donorOrganization.latitude)
+      : null;
+    const donorLon = listing.donorOrganization?.longitude
+      ? Number(listing.donorOrganization.longitude)
+      : null;
+
     const matches = MatchingEngine.match({
       foodCategory: listing.foodCategory,
       quantityKg: Number(listing.quantityKg),
       recommendedRoute: scoreAssessment?.recommendedRoute || RouteHierarchy.REDISTRIBUTE,
       foodSafetyGate: fsgResult,
       candidates,
+      donorCoords: donorLat !== null && donorLon !== null ? { latitude: donorLat, longitude: donorLon } : null,
     });
 
     return {
@@ -327,10 +335,21 @@ export class SurplusService {
       foodName: listing.foodName,
       quantityKg: listing.quantityKg,
       portions: listing.portions,
+      donorOrganization: {
+        id: listing.donorOrganizationId,
+        name: listing.donorOrganization?.name || 'Donatur',
+        latitude: donorLat,
+        longitude: donorLon,
+      },
       safetyAssessment,
       scoreAssessment,
       matches,
     };
+  }
+
+  async getMatches(id: string) {
+    const assessment = await this.getAssessment(id);
+    return assessment.matches;
   }
 
   async updateSafetyParameters(

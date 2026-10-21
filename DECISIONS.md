@@ -325,3 +325,27 @@ Alur normal REPLATE bersifat *push-only* dari donor ke mitra, di mana surplus ya
 3. **Pencegahan Respons Duplikat & Batas Waktu Ketat:**
    - Penerapan constraint unik `@@unique([broadcastId, supplierOrgId])` untuk mencegah donor yang sama mengonfirmasi ganda.
    - Siaran yang telah kedaluwarsa (`expiresAt <= NOW()`) secara deterministik ditolak dengan `422 Unprocessable Entity` dan otomatis beralih ke status `EXPIRED` baik via pemanggilan endpoint aktif maupun background worker berkala.
+
+---
+
+## 17. ADR-017: Manajemen Profil, Koordinat Geospasial Organisasi & Rumus Haversine
+
+### Konteks
+Fitur siaran darurat SOS (`EmergencyBroadcast`) dan alur pencocokan logistik REPLATE membutuhkan penentuan radius jarak fisik (misal $\le 20\text{ km}$) antara posko mitra penerima dan donor makanan surplus. Ketergantungan pada API geocoding pihak ketiga berbayar (misal Google Maps API) menimbulkan risiko biaya, latensi jaringan eksternal, dan potensi *vendor lock-in*. Selain itu, model `Organization` sebelumnya belum menyimpan koordinat geospasial (`latitude` dan `longitude`), sehingga koordinat hanya dimiliki secara sepihak oleh model `RecipientProfile`.
+
+### Keputusan
+**Status: `ACCEPTED` (Fase 14 - TASK-014)**
+1. **Penambahan Koordinat Geospasial pada Organisasi:**
+   - Menambahkan field `latitude: Decimal? @db.Decimal(9, 6)` dan `longitude: Decimal? @db.Decimal(9, 6)` pada model `Organization`.
+   - Menambahkan field narahubung organisasi `contactEmail: String? @db.VarChar(255)`.
+   - Menggunakan presisi desimal 6 angka di belakang koma (akurasi geodetik $\approx 0.11\text{ meter}$).
+2. **Kalkulasi Jarak Matematis via Haversine Formula:**
+   - Jarak antara koordinat donor dan posko dihitung secara terisolasi dan deterministik menggunakan rumus trigonometri bola bumi **Haversine**:
+     $$d = 2R \arcsin\left(\sqrt{\sin^2\left(\frac{\Delta\text{lat}}{2}\right) + \cos(\text{lat}_1)\cos(\text{lat}_2)\sin^2\left(\frac{\Delta\text{lon}}{2}\right)}\right)$$
+     dengan $R = 6371\text{ km}$.
+   - Logika berjalan 100% di server backend (`haversine.util.ts`) tanpa ketergantungan API pihak ketiga.
+3. **Imutabilitas Email & Peran (Role):**
+   - Email diperlakukan sebagai pengenal unik autentikasi (*read-only*) dan tidak dapat diubah melalui endpoint profil untuk mencegah *account takeover*.
+   - Peran akun (`ADMIN`, `SUPPLIER`, `MITRA`) bersifat tetap sesuai pendaftaran mandiri; form profil berfokus pada spesifikasi operasional fasilitas (kapasitas harian, fasilitas rantai dingin kulkas/freezer, dan kategori pangan yang diterima).
+4. **Pencegahan Sesi Basi saat Ubah Password:**
+   - Endpoint `PUT /api/v1/profile/password` memverifikasi kata sandi lama via Argon2id, mengenkripsi kata sandi baru, dan secara atomik mencabut (*revoke*) seluruh refresh token aktif untuk memutus sesi di perangkat lain.

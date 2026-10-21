@@ -228,10 +228,10 @@ Mewakili entitas hukum atau operasional (pemasok katering, restoran, dapur umum 
 | `name` | `VARCHAR(150)` | No | Nama organisasi (misal: "PT Boga Berkah Katering") |
 | `organization_type` | `VARCHAR(50)` | No | Check: `CHECK (organization_type IN ('SUPPLIER', 'RECIPIENT', 'RECOVERY_FACILITY', 'PLATFORM_OPERATOR'))` |
 | `address` | `TEXT` | No | Alamat fisik lengkap |
-| `latitude` | `NUMERIC(10, 7)` | Yes | Koordinat lintang |
-| `longitude` | `NUMERIC(10, 7)` | Yes | Koordinat bujur |
-| `contact_phone` | `VARCHAR(30)` | No | Nomor telepon kontak resmi |
-| `contact_email` | `VARCHAR(100)` | No | Email kontak resmi |
+| `latitude` | `NUMERIC(9, 6)` | Yes | Koordinat lintang geospasial |
+| `longitude` | `NUMERIC(9, 6)` | Yes | Koordinat bujur geospasial |
+| `contact_phone` | `VARCHAR(50)` | Yes | Nomor telepon kontak resmi narahubung |
+| `contact_email` | `VARCHAR(255)` | Yes | Email kontak resmi narahubung |
 | `is_verified` | `BOOLEAN` | No | Default: `true` |
 | `created_at` | `TIMESTAMPTZ` | No | Default: `NOW()` (UTC) |
 | `updated_at` | `TIMESTAMPTZ` | No | Default: `NOW()` (UTC) |

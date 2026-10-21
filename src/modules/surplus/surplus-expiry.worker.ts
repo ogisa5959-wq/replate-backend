@@ -97,11 +97,17 @@ export class SurplusExpiryWorker {
 
           if (capacityRecord) {
             const qty = Number(listing.quantityKg);
+            const currentAllocated = Number(capacityRecord.allocatedCapacityKg);
+            const maxCap = Number(capacityRecord.maxCapacityKg);
+            const decr = Math.min(qty, currentAllocated);
+            const newAllocated = Math.max(0, currentAllocated - decr);
+            const newAvailable = Math.min(maxCap, Number(capacityRecord.availableCapacityKg) + decr);
+
             await tx.recipientCapacity.update({
               where: { id: capacityRecord.id },
               data: {
-                allocatedCapacityKg: { decrement: qty },
-                availableCapacityKg: { increment: qty },
+                allocatedCapacityKg: newAllocated,
+                availableCapacityKg: newAvailable,
               },
             });
           }

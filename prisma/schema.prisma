@@ -124,6 +124,9 @@ model Organization {
   type             OrganizationType
   address          String
   contactPhone     String?          @map("contact_phone") @db.VarChar(50)
+  contactEmail     String?          @map("contact_email") @db.VarChar(255)
+  latitude         Decimal?         @db.Decimal(9, 6)
+  longitude        Decimal?         @db.Decimal(9, 6)
   isVerified       Boolean          @default(false) @map("is_verified")
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
@@ -422,7 +425,9 @@ model EmergencyBroadcast {
   urgencyReason       String               @map("urgency_reason") @db.Text
   contactPerson       String?              @map("contact_person") @db.VarChar(255)
   contactPhone        String?              @map("contact_phone") @db.VarChar(50)
-  radiusKm            Decimal              @default(10.0) @map("radius_km") @db.Decimal(5, 2)
+  latitude            Decimal?             @db.Decimal(9, 6)
+  longitude           Decimal?             @db.Decimal(9, 6)
+  radiusKm            Decimal              @default(20.0) @map("radius_km") @db.Decimal(5, 2)
   expiresAt           DateTime             @map("expires_at")
   status              BroadcastStatus      @default(ACTIVE)
   createdAt           DateTime             @default(now()) @map("created_at")
