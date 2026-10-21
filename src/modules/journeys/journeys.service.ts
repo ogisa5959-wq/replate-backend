@@ -406,9 +406,14 @@ export class JourneysService {
       await this.capacityService.releaseCapacity(journey.recipientId, qtyKg, tx);
 
       // 4. Record timeline event
-      const timelineNote = isPhysicalRejection
-        ? `PENOLAKAN FISIK DI LOKASI MITRA: ${dto.cancellationReason}. Kapasitas kuota penerima telah dipulihkan.`
-        : `Pembatalan operasional pengiriman: ${dto.cancellationReason}. Kapasitas kuota penerima telah dipulihkan.`;
+      let timelineNote: string;
+      if (dto.isIncidentReport) {
+        timelineNote = `[KENDALA PENGIRIMAN] ${dto.cancellationReason}${dto.issueReportedBy ? ` (Dilaporkan oleh: ${dto.issueReportedBy})` : ''}${dto.note ? ` | Catatan: ${dto.note}` : ''}. Kapasitas kuota penerima telah dipulihkan.`;
+      } else if (isPhysicalRejection) {
+        timelineNote = `PENOLAKAN FISIK DI LOKASI MITRA: ${dto.cancellationReason}. Kapasitas kuota penerima telah dipulihkan.`;
+      } else {
+        timelineNote = `Pembatalan operasional pengiriman: ${dto.cancellationReason}. Kapasitas kuota penerima telah dipulihkan.`;
+      }
 
       await tx.journeyTimelineEvent.create({
         data: {
@@ -430,8 +435,12 @@ export class JourneysService {
           newState: {
             status: JourneyStatus.CANCELLED,
             cancellationReason: dto.cancellationReason,
+            isIncidentReport: dto.isIncidentReport || false,
+            issueReportedBy: dto.issueReportedBy || null,
           },
-          reason: dto.cancellationReason,
+          reason: dto.isIncidentReport
+            ? `[KENDALA PENGIRIMAN] ${dto.cancellationReason}`
+            : dto.cancellationReason,
         },
       });
 

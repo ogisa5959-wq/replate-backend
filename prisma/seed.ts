@@ -187,7 +187,12 @@ async function main() {
         capacityDate: today,
       },
     },
-    update: {},
+    update: {
+      maxCapacityKg: 100.0,
+      allocatedCapacityKg: 0.0,
+      receivedCapacityKg: 0.0,
+      availableCapacityKg: 100.0,
+    },
     create: {
       recipientId: recipientProfile.id,
       capacityDate: today,

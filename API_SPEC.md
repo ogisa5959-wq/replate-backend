@@ -151,6 +151,56 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
 
 ---
 
+### 3.5. `POST /api/v1/auth/register`
+- **Tujuan:** Pendaftaran akun pengguna baru mandiri (*self-onboarding*) dari modal login/register frontend.
+- **Role:** Publik.
+- **Request Body:**
+  ```json
+  {
+    "username": "dapurberkah",
+    "email": "kontak@dapurberkah.org",
+    "password": "PasswordAman123!",
+    "name": "Siti Rahma",
+    "organizationName": "Dapur Barokah Matraman",
+    "role": "MITRA"
+  }
+  ```
+- **Validasi Server:**
+  - `username`: String minimal 3 karakter, alfanumerik. Wajib unik.
+  - `email`: Format email valid. Wajib unik.
+  - `password`: Minimal 6 karakter.
+  - `name`: Nama lengkap pengguna (wajib non-kosong).
+  - `organizationName`: Nama badan/dapur/katering (wajib non-kosong, mendukung alias `organization` dari payload klien).
+  - `role`: Enum `SUPPLIER` atau `MITRA` (bersifat case-insensitive, mendukung format huruf kecil `supplier` atau `mitra` dari klien).
+- **Response `201 Created`:**
+  ```json
+  {
+    "success": true,
+    "statusCode": 201,
+    "message": "Pendaftaran akun berhasil",
+    "data": {
+      "user": {
+        "id": "e4f8b912-3c1a-4d9e-b812-7f9a0c111222",
+        "username": "dapurberkah",
+        "email": "kontak@dapurberkah.org",
+        "fullName": "Siti Rahma",
+        "role": "MITRA",
+        "avatarIcon": "🤝",
+        "organization": {
+          "id": "99a1b2c3-d4e5-4f6a-8b9c-0d1e2f3a4b5c",
+          "name": "Dapur Barokah Matraman",
+          "type": "RECIPIENT"
+        }
+      },
+      "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "expiresInSeconds": 900
+    }
+  }
+  ```
+- **Set-Cookie:** `refreshToken=...; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth; Max-Age=604800`
+
+---
+
 ## 4. Modul 2: Data Rujukan Master (`/api/v1/reference`)
 
 ### 4.1. `GET /api/v1/reference/food-types`
@@ -310,6 +360,26 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
 
 ---
 
+### 5.6. `DELETE /api/v1/surplus-listings/:id`
+- **Tujuan:** Menghapus laporan surplus makanan dengan mekanisme *soft delete* terproteksi tombstone (dipanggil oleh frontend `api.surplus.delete(id)`).
+- **Role:** `SUPPLIER` (pemilik listing), `ADMIN`.
+- **Prekondisi Bisnis & State Machine:**
+  - Hanya diizinkan jika siklus hidup masih berstatus `REPORTED` atau `ASSESSED`.
+  - Jika listing sudah berstatus `MATCHED`, `RESCUE_INITIATED`, atau `RECEIVED`, server **menolak penghapusan dengan 400 Bad Request** karena armada logistik atau mitra penerima telah terikat. Pembatalan harus melalui endpoint `POST /journeys/:id/cancel`.
+- **Efek Database:**
+  - Menandai baris `is_deleted = true`, `deleted_at = NOW()`.
+  - Mencatat entri audit log `action: 'DELETE'` di tabel `audit_logs`.
+- **Response `200 OK`:**
+  ```json
+  {
+    "success": true,
+    "statusCode": 200,
+    "message": "Laporan surplus berhasil dihapus."
+  }
+  ```
+
+---
+
 ## 6. Modul 4: Pencocokan Mitra & Alokasi Kuota (`/api/v1/surplus-listings/:id/matches`)
 
 ### 6.1. `GET /api/v1/surplus-listings/:id/matches`
@@ -411,13 +481,15 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
 
 ---
 
-### 7.5. `POST /api/v1/journeys/:id/cancel` (Penolakan Fisik di Lokasi Mitra)
-- **Tujuan:** Membatalkan pengiriman karena kendala logistik atau **pelaporan penolakan fisik makanan saat kurir tiba di lokasi mitra penerima**.
+### 7.5. `POST /api/v1/journeys/:id/cancel` (Penolakan Fisik di Lokasi Mitra & Insiden Transit)
+- **Tujuan:** Membatalkan pengiriman karena kendala logistik, **pelaporan kendala insiden in-transit**, atau **pelaporan penolakan fisik makanan saat kurir tiba di lokasi mitra penerima (doorstep rejection)**.
 - **Role:** `MITRA` (penerima tujuan), `SUPPLIER` (sebelum kurir jalan), `ADMIN`.
 - **Request Body:**
   ```json
   {
     "cancellationReason": "Suhu penyimpanan di luar toleransi (makanan telah dingin dan berbau asam saat tiba)",
+    "isIncidentReport": true,
+    "issueReportedBy": "Dapur Barokah Matraman",
     "note": "Pemeriksaan organoleptik fisik gagal di pintu penerimaan dapur umum."
   }
   ```
@@ -427,7 +499,7 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
   2. Kembalikan kuota yang dicadangkan: `allocated_capacity_kg -= qty_reserved`, `available_capacity_kg += qty_reserved`.
   3. Ubah status journey dan status listing menjadi `CANCELLED`.
   4. Simpan `cancellation_reason`, `cancelled_at: NOW()`, dan `cancelled_by_user_id` di `rescue_journeys`.
-  5. Catat event `CANCELLED` di `journey_timeline_events` dan `audit_logs`.
+  5. Catat event `CANCELLED` di `journey_timeline_events` dan `audit_logs` dengan label `[KENDALA PENGIRIMAN]` jika `isIncidentReport: true`.
   6. **Tanpa Reroute Otomatis:** Sistem tidak mengalihkan makanan yang ditolak ke rute lain secara otomatis demi perlindungan keselamatan publik.
 
 ---
@@ -456,4 +528,175 @@ Sistem memisahkan secara tegas siklus hidup pelaporan surplus (*Listing Lifecycl
 
 ### 9.2. `DELETE /api/v1/admin/simulation/clear-demo`
 - **Tujuan:** Membersihkan data simulasi bertanda `is_demo = true` tanpa menghapus data donasi asli.
+- **Role:** `ADMIN`.
+
+---
+
+## 10. Modul 8: Permohonan Distribusi Darurat (`/api/v1/emergency-requests`)
+
+Modul ini melayani fitur **Pusat Permintaan Pangan Mendesak (`EmergencyDistribution.jsx`)** pada portal mitra penerima, memungkinkan mitra mengajukan permohonan bantuan makanan darurat (*pull-based*), mencocokkannya dengan surplus aktif yang aman, serta mengalokasikan donasi.
+
+### 10.1. `POST /api/v1/emergency-requests`
+- **Tujuan:** Membuat permohonan bantuan pangan darurat baru.
+- **Role:** `MITRA`, `ADMIN`.
+- **Request Body:**
+  ```json
+  {
+    "neededFoodType": "cooked_meals",
+    "foodTypeName": "Makanan Siap Santap / Nasi Kotak",
+    "requestedPortions": 50,
+    "beneficiaryCount": 50,
+    "beneficiaryGroup": "Warga Terdampak Banjir & Pengungsi",
+    "targetLocation": "Posko Dapur Umum Mandiri, Tebet Barat, Jakarta Selatan",
+    "urgencyLevel": "CRITICAL",
+    "urgencyDeadline": "Hari ini sebelum 12:30 WIB (Makan Siang)",
+    "urgencyReason": "Lonjakan pengungsi baru sebanyak 50 jiwa, stok logistik habis.",
+    "contactPerson": "Ibu Siti Rahma (Koordinator)",
+    "contactPhone": "0812-3456-7890",
+    "notes": "Diutamakan makanan hangat tertutup."
+  }
+  ```
+- **Validasi Server:**
+  - `requestedPortions` > 0.
+  - `beneficiaryCount` > 0.
+  - `targetLocation`, `urgencyReason`, `contactPhone` wajib diisi.
+- **Response `201 Created`:** Mengembalikan entitas `EmergencyFoodRequest` berstatus `OPEN`.
+
+---
+
+### 10.2. `GET /api/v1/emergency-requests`
+- **Tujuan:** Mengambil daftar permohonan pangan darurat dengan paginasi dan filter.
+- **Role:** Terautentikasi (`MITRA`, `SUPPLIER`, `ADMIN`).
+- **Query Params:** `status` (`OPEN` / `ALLOCATED` / `FULFILLED` / `CANCELLED`), `urgencyLevel` (`CRITICAL` / `HIGH` / `MEDIUM`), `page`, `limit`.
+- **Response `200 OK`:** Array daftar permohonan darurat aktif (entitas dengan `isDeleted: true` disaring otomatis).
+
+---
+
+### 10.3. `GET /api/v1/emergency-requests/:id`
+- **Tujuan:** Mendapatkan rincian lengkap permohonan darurat beserta relasi mitra pemohon dan surplus yang dialokasikan (jika ada).
+- **Role:** Terautentikasi.
+
+---
+
+### 10.4. `GET /api/v1/emergency-requests/:id/matching-surplus`
+- **Tujuan:** Mengidentifikasi kandidat surplus aktif yang dapat memenuhi permohonan darurat ini.
+- **Role:** `MITRA` (pemilik permohonan), `ADMIN`.
+- **Aturan Ketat Keamanan Pangan (Food Safety Guardrail):**
+  - Surplus listing **Wajib berstatus `PASS`** pada Food Safety Gate.
+  - Surplus listing berstatus `REVIEW` atau `REJECT` **DILARANG MUNCUL**.
+  - Rute rekomendasi wajib layak konsumsi manusia (`REDISTRIBUTE` atau `PROCESS`).
+  - Status listing saat ini harus `REPORTED` atau `ASSESSED`.
+  - Waktu aman belum kedaluwarsa (`safeUntilTimestamp > NOW()`).
+
+---
+
+### 10.5. `POST /api/v1/emergency-requests/:id/allocate`
+- **Tujuan:** Mengalokasikan laporan surplus donor ke permohonan darurat secara atomik.
+- **Role:** `MITRA` (pemilik permohonan), `ADMIN`.
+- **Request Body:**
+  ```json
+  {
+    "surplusListingId": "7a3e5c9b-6b21-4f12-88d3-7d8b9e000101",
+    "notes": "Dialokasikan untuk pemenuhan kebutuhan pengungsi banjir."
+  }
+  ```
+- **Aturan Transaksi Database (`$transaction`):**
+  1. Kunci baris emergency request & surplus listing: `SELECT ... FOR UPDATE`.
+  2. Verifikasi status emergency request adalah `OPEN`.
+  3. Verifikasi status surplus listing adalah `REPORTED` atau `ASSESSED` dan **Food Safety Gate berstatus `PASS`**.
+  4. Periksa dan cadangkan kapasitas harian mitra penerima (`allocated_capacity_kg += quantityKg`).
+  5. Buat entitas `RescueJourney` dengan status `MATCHED`.
+  6. Perbarui status `SurplusListing` menjadi `MATCHED`.
+  7. Perbarui status `EmergencyFoodRequest` menjadi `ALLOCATED` dengan referensi `matchedSurplusId` dan `matchedAt`.
+  8. Tambahkan event di `journey_timeline_events` dan `audit_logs`.
+- **Response `200 OK`:** Objek permohonan darurat berstatus `ALLOCATED` beserta rincian perjalanan donasi.
+
+---
+
+### 10.6. `PATCH /api/v1/emergency-requests/:id/status`
+- **Tujuan:** Memperbarui status permohonan darurat secara manual (misal: menandai `FULFILLED` saat makanan tiba di posko, atau `CANCELLED`).
+- **Role:** `MITRA` (pemilik), `ADMIN`.
+- **Request Body:**
+  ```json
+  {
+    "status": "CANCELLED",
+    "cancelReason": "Kebutuhan telah terpenuhi dari sumber dapur logistik lain."
+  }
+  ```
+
+---
+
+### 10.7. `DELETE /api/v1/emergency-requests/:id`
+- **Tujuan:** Menghapus permohonan darurat (*soft delete* tombstone) agar tidak muncul kembali saat sinkronisasi multi-device.
+- **Role:** `MITRA` (pemilik), `ADMIN`.
+- **Efek Database:** Set `is_deleted = true`, `deleted_at = NOW()`, catat `AuditLog`.
+- **Response `200 OK`:** Konfirmasi keberhasilan penghapusan.
+
+---
+
+## 11. Endpoint Siaran Darurat SOS (*Emergency Food Broadcasts*)
+
+### 11.1. `GET /api/v1/emergency-broadcasts/active`
+- **Tujuan:** Mengambil seluruh siaran darurat SOS aktif yang belum kedaluwarsa untuk penyedia surplus/katering.
+- **Role:** `SUPPLIER`, `ADMIN`.
+- **Response `200 OK`:**
+  ```json
+  {
+    "success": true,
+    "data": [
+      {
+        "id": "uuid-broadcast",
+        "emergencyRequestId": "uuid-req",
+        "recipientOrgName": "Dapur Posko Banjir Matraman",
+        "recipientLocation": "Jl. Matraman No. 12, Jakarta",
+        "neededFoodType": "cooked_meals",
+        "foodTypeName": "Makanan Siap Santap / Nasi Kotak",
+        "requestedPortions": 60,
+        "targetQuantityKg": 21.0,
+        "urgencyLevel": "CRITICAL",
+        "urgencyDeadline": "Sebelum 12:30 WIB",
+        "urgencyReason": "40 pengungsi baru datang...",
+        "contactPerson": "Ibu Siti Rahma",
+        "contactPhone": "0812-3456-7890",
+        "radiusKm": 10.0,
+        "expiresAt": "2026-10-21T14:30:00.000Z",
+        "status": "ACTIVE",
+        "hasResponded": false
+      }
+    ]
+  }
+  ```
+
+---
+
+### 11.2. `GET /api/v1/emergency-broadcasts/my-responses`
+- **Tujuan:** Mengambil riwayat bantuan darurat yang telah dikonfirmasi oleh penyedia surplus yang sedang login.
+- **Role:** `SUPPLIER`, `ADMIN`.
+- **Response `200 OK`:** Daftar objek `SupplierBroadcastResponse` beserta data siaran dan status perjalanan logistik.
+
+---
+
+### 11.3. `POST /api/v1/emergency-broadcasts/:broadcastId/respond`
+- **Tujuan:** Konfirmasi kesediaan penyedia surplus untuk mengirimkan bantuan pangan darurat secara instan satu-klik.
+- **Role:** `SUPPLIER`, `ADMIN`.
+- **Request Body:**
+  ```json
+  {
+    "notes": "Tersedia 60 porsi nasi kotak ayam bakar baru matang, dikemas higienis."
+  }
+  ```
+- **Aturan Transaksi Database (`$transaction`):**
+  1. Kunci baris siaran broadcast dengan `SELECT ... FOR UPDATE` dan pastikan berstatus `ACTIVE` dan belum kedaluwarsa.
+  2. Cegah respons duplikat dari organisasi supplier yang sama (`409 Conflict`).
+  3. Otomatis buat `SurplusListing` dengan `isEmergencyResponse = true` dan status `MATCHED`.
+  4. Otomatis buat `FoodSafetyAssessment` berstatus `PASS` berbasis atestasi darurat donor.
+  5. Otomatis buat `RescueScoreAssessment` dan `RescueJourney` berstatus `MATCHED`.
+  6. Catat `SupplierBroadcastResponse` dan mutasikan `EmergencyBroadcast.status` $\to$ `RESPONDED` serta `EmergencyFoodRequest.status` $\to$ `ALLOCATED`.
+  7. Catat `AuditLog`.
+- **Response `200 OK`:** Objek respons, journey baru, dan surplus listing darurat.
+
+---
+
+### 11.4. `PATCH /api/v1/emergency-broadcasts/:broadcastId/status`
+- **Tujuan:** Pengaturan status siaran darurat administratif.
 - **Role:** `ADMIN`.

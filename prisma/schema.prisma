@@ -81,6 +81,34 @@ enum JourneyStatus {
   CANCELLED
 }
 
+enum EmergencyUrgencyLevel {
+  CRITICAL
+  HIGH
+  MEDIUM
+}
+
+enum EmergencyRequestStatus {
+  OPEN
+  ALLOCATED
+  FULFILLED
+  CANCELLED
+}
+
+enum BroadcastStatus {
+  ACTIVE
+  RESPONDED
+  EXPIRED
+  FULFILLED
+  CANCELLED
+}
+
+enum SupplierResponseStatus {
+  CONFIRMED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -103,6 +131,7 @@ model Organization {
   users            User[]
   surplusListings  SurplusListing[] @relation("DonorListings")
   recipientProfile RecipientProfile?
+  supplierResponses SupplierBroadcastResponse[]
 
   @@map("organizations")
 }
@@ -123,6 +152,8 @@ model User {
   reportedListings SurplusListing[] @relation("ReportedListings")
   timelineEvents JourneyTimelineEvent[]
   auditLogs      AuditLog[]
+  emergencyRequests EmergencyFoodRequest[]
+  broadcastResponses SupplierBroadcastResponse[]
 
   @@index([organizationId])
   @@index([role])
@@ -178,6 +209,9 @@ model SurplusListing {
   safeUntilTimestamp     DateTime               @map("safe_until_timestamp")
   notes                  String?
   currentLifecycleStatus ListingLifecycleStatus @default(REPORTED) @map("current_lifecycle_status")
+  isEmergencyResponse    Boolean                @default(false) @map("is_emergency_response")
+  isDeleted              Boolean                @default(false) @map("is_deleted")
+  deletedAt              DateTime?              @map("deleted_at")
   createdAt              DateTime               @default(now()) @map("created_at")
   updatedAt              DateTime               @updatedAt @map("updated_at")
 
@@ -187,10 +221,12 @@ model SurplusListing {
   safetyAssessment       FoodSafetyAssessment?
   scoreAssessment        RescueScoreAssessment?
   journeys               RescueJourney[]
+  emergencyRequests      EmergencyFoodRequest[]
 
   @@index([donorOrganizationId])
   @@index([currentLifecycleStatus])
   @@index([safeUntilTimestamp])
+  @@index([isDeleted])
   @@map("surplus_listings")
 }
 
@@ -249,6 +285,7 @@ model RecipientProfile {
   organization           Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   capacities             RecipientCapacity[]
   journeys               RescueJourney[]
+  emergencyRequests      EmergencyFoodRequest[]
 
   @@map("recipient_profiles")
 }
@@ -330,4 +367,93 @@ model AuditLog {
   @@index([actorUserId])
   @@index([timestamp])
   @@map("audit_logs")
+}
+
+model EmergencyFoodRequest {
+  id                String                 @id @default(uuid()) @db.Uuid
+  recipientId       String                 @map("recipient_id") @db.Uuid
+  requesterUserId   String                 @map("requester_user_id") @db.Uuid
+  neededFoodType    String                 @map("needed_food_type") @db.VarChar(100)
+  foodTypeName      String                 @map("food_type_name") @db.VarChar(255)
+  requestedPortions Int                    @map("requested_portions")
+  estimatedKg       Decimal                @map("estimated_kg") @db.Decimal(10, 2)
+  beneficiaryCount  Int                    @map("beneficiary_count")
+  beneficiaryGroup  String                 @map("beneficiary_group") @db.VarChar(255)
+  targetLocation    String                 @map("target_location") @db.Text
+  urgencyLevel      EmergencyUrgencyLevel  @map("urgency_level")
+  urgencyDeadline   String                 @map("urgency_deadline") @db.VarChar(255)
+  urgencyReason     String                 @map("urgency_reason") @db.Text
+  contactPerson     String                 @map("contact_person") @db.VarChar(255)
+  contactPhone      String                 @map("contact_phone") @db.VarChar(50)
+  notes             String?                @db.Text
+  status            EmergencyRequestStatus @default(OPEN)
+  matchedSurplusId  String?                @map("matched_surplus_id") @db.Uuid
+  cancelReason      String?                @map("cancel_reason") @db.Text
+  matchedAt         DateTime?              @map("matched_at")
+  fulfilledAt       DateTime?              @map("fulfilled_at")
+  cancelledAt       DateTime?              @map("cancelled_at")
+  isDeleted         Boolean                @default(false) @map("is_deleted")
+  deletedAt         DateTime?              @map("deleted_at")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+
+  recipient         RecipientProfile       @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  requester         User                   @relation(fields: [requesterUserId], references: [id], onDelete: Restrict)
+  matchedSurplus    SurplusListing?        @relation(fields: [matchedSurplusId], references: [id], onDelete: SetNull)
+  broadcast         EmergencyBroadcast?
+
+  @@index([status, urgencyLevel])
+  @@index([recipientId])
+  @@index([isDeleted])
+  @@map("emergency_food_requests")
+}
+
+model EmergencyBroadcast {
+  id                  String               @id @default(uuid()) @db.Uuid
+  emergencyRequestId  String               @unique @map("emergency_request_id") @db.Uuid
+  recipientOrgName    String               @map("recipient_org_name") @db.VarChar(255)
+  recipientLocation   String               @map("recipient_location") @db.VarChar(500)
+  neededFoodType      String               @map("needed_food_type") @db.VarChar(100)
+  foodTypeName        String?              @map("food_type_name") @db.VarChar(255)
+  requestedPortions   Int                  @map("requested_portions")
+  targetQuantityKg    Decimal              @map("target_quantity_kg") @db.Decimal(10, 2)
+  urgencyLevel        EmergencyUrgencyLevel @map("urgency_level")
+  urgencyDeadline     String?              @map("urgency_deadline") @db.VarChar(255)
+  urgencyReason       String               @map("urgency_reason") @db.Text
+  contactPerson       String?              @map("contact_person") @db.VarChar(255)
+  contactPhone        String?              @map("contact_phone") @db.VarChar(50)
+  radiusKm            Decimal              @default(10.0) @map("radius_km") @db.Decimal(5, 2)
+  expiresAt           DateTime             @map("expires_at")
+  status              BroadcastStatus      @default(ACTIVE)
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  emergencyRequest    EmergencyFoodRequest @relation(fields: [emergencyRequestId], references: [id], onDelete: Cascade)
+  supplierResponses   SupplierBroadcastResponse[]
+
+  @@index([status, expiresAt])
+  @@index([emergencyRequestId])
+  @@map("emergency_broadcasts")
+}
+
+model SupplierBroadcastResponse {
+  id               String                @id @default(uuid()) @db.Uuid
+  broadcastId      String                @map("broadcast_id") @db.Uuid
+  supplierOrgId    String                @map("supplier_org_id") @db.Uuid
+  supplierOrgName  String                @map("supplier_org_name") @db.VarChar(255)
+  supplierUserId   String                @map("supplier_user_id") @db.Uuid
+  surplusListingId String?               @map("surplus_listing_id") @db.Uuid
+  journeyId        String?               @map("journey_id") @db.Uuid
+  status           SupplierResponseStatus @default(CONFIRMED)
+  respondedAt      DateTime              @default(now()) @map("responded_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+
+  broadcast        EmergencyBroadcast    @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  supplierOrg      Organization          @relation(fields: [supplierOrgId], references: [id], onDelete: Restrict)
+  supplierUser     User                  @relation(fields: [supplierUserId], references: [id], onDelete: Restrict)
+
+  @@unique([broadcastId, supplierOrgId])
+  @@index([supplierOrgId])
+  @@index([broadcastId])
+  @@map("supplier_broadcast_responses")
 }

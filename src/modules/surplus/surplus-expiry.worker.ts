@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
-import { ListingLifecycleStatus, JourneyStatus, AuditAction } from '@prisma/client';
+import { ListingLifecycleStatus, JourneyStatus, AuditAction, BroadcastStatus } from '@prisma/client';
 
 @Injectable()
 export class SurplusExpiryWorker {
@@ -15,6 +15,7 @@ export class SurplusExpiryWorker {
     expiredCount: number;
     cancelledMatchedCount: number;
     flaggedInTransitCount: number;
+    expiredBroadcastCount?: number;
   }> {
     this.logger.log('⏰ Running scheduled surplus expiry worker...');
     const now = new Date();
@@ -172,14 +173,27 @@ export class SurplusExpiryWorker {
       }
     }
 
+    // 4. Process ACTIVE emergency broadcasts that passed expires_at
+    const expiredBroadcasts = await this.prisma.emergencyBroadcast.updateMany({
+      where: {
+        status: BroadcastStatus.ACTIVE,
+        expiresAt: { lte: now },
+      },
+      data: {
+        status: BroadcastStatus.EXPIRED,
+      },
+    });
+    const expiredBroadcastCount = expiredBroadcasts.count;
+
     this.logger.log(
-      `✅ Expiry worker completed. Expired: ${expiredCount}, Cancelled Matched: ${cancelledMatchedCount}, Flagged In-Transit: ${flaggedInTransitCount}`,
+      `✅ Expiry worker completed. Expired: ${expiredCount}, Cancelled Matched: ${cancelledMatchedCount}, Flagged In-Transit: ${flaggedInTransitCount}, Expired Broadcasts: ${expiredBroadcastCount}`,
     );
 
     return {
       expiredCount,
       cancelledMatchedCount,
       flaggedInTransitCount,
+      expiredBroadcastCount,
     };
   }
 }

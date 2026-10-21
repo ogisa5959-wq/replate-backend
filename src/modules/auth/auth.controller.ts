@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 import { Public } from '@/common/decorators/public.decorator';
 import { CurrentUser, AuthenticatedUser } from '@/common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '@/common/guards/jwt-auth.guard';
@@ -49,6 +50,38 @@ export class AuthController {
         user: result.user,
         accessToken: result.accessToken,
         expiresIn: result.expiresIn,
+      },
+    };
+  }
+
+  @Public()
+  @Post('register')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Registrasi mandiri pengguna baru (SUPPLIER atau MITRA)' })
+  @ApiResponse({ status: 201, description: 'Registrasi berhasil, mengembalikan token akses & menyetel cookie refreshToken' })
+  @ApiResponse({ status: 400, description: 'Data pendaftaran tidak valid atau email sudah terdaftar' })
+  async register(
+    @Body() registerDto: RegisterDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.register(registerDto);
+
+    response.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/api/v1/auth',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return {
+      success: true,
+      statusCode: 201,
+      message: 'Pendaftaran akun berhasil',
+      data: {
+        user: result.user,
+        accessToken: result.accessToken,
+        expiresInSeconds: result.expiresInSeconds,
       },
     };
   }

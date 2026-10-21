@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Put,
+  Delete,
   Param,
   Body,
   Query,
@@ -125,6 +126,19 @@ export class SurplusController {
       message: 'Mitra berhasil ditetapkan dan kapasitas berhasil dicadangkan',
       data: journey,
     };
+  }
+
+  @Delete(':id')
+  @Roles(UserRole.SUPPLIER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Hapus laporan surplus dengan mekanisme soft delete (Tombstone)' })
+  @ApiResponse({ status: 200, description: 'Laporan surplus berhasil dihapus' })
+  @ApiResponse({ status: 400, description: 'Laporan surplus sudah terikat status logistik lanjutan' })
+  @ApiResponse({ status: 404, description: 'Laporan surplus tidak ditemukan' })
+  async delete(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.surplusService.delete(id, user);
   }
 }
 

@@ -21,6 +21,8 @@ Dokumen ini mencatat keputusan arsitektur resmi (*Architectural Decision Records
 | **ADR-011** | Model Kapasitas Terproteksi & Akuntansi Kuota Harian | `ACCEPTED` | Kapasitas & Alokasi |
 | **ADR-012** | Kebijakan Validasi Waktu Penyiapan & Sumber Waktu Aman (safeUntilTimestamp) | `ACCEPTED` | Validasi & Keamanan Pangan |
 | **ADR-013** | Eksekusi Pengujian Integrasi Database Berurutan (--runInBand) | `ACCEPTED` | Pengujian & Mutu |
+| **ADR-014** | Alur Alokasi Pangan Darurat (Emergency Requisition) & Hard Gate FSG PASS | `ACCEPTED` | Domain & Keamanan Pangan |
+| **ADR-015** | Proteksi Tombstone & Soft Delete pada Penghapusan Data Multi-Device | `ACCEPTED` | Integritas Data & Cloud Sync |
 
 ---
 
@@ -271,13 +273,55 @@ Tabel `recipient_capacities` mengelola kuota harian per mitra dengan definisi se
 
 ---
 
-## 13. ADR-013: Eksekusi Pengujian Integrasi Database Berurutan (--runInBand)
+## 14. ADR-014: Alur Alokasi Pangan Darurat (Emergency Requisition) & Hard Gate FSG PASS
 
 ### Konteks
-Jest secara default menjalankan berkas pengujian secara paralel menggunakan beberapa *worker processes*. Pada pengujian unit murni (seperti Food Safety Gate dan Rescue Score), hal ini sangat efisien. Namun, pada pengujian integrasi database yang berinteraksi langsung dengan instance PostgreSQL lokal yang sama (`replate_db`), beberapa rangkaian uji (`capacity.spec.ts`, `journeys.spec.ts`, `surplus.spec.ts`) mengakses dan memodifikasi baris kuota kapasitas mitra demo yang sama pada milidetik yang identik, menimbulkan interferensi *dirty state* konkurensi antar-pekerja jest.
+Fitur baru frontend `EmergencyDistribution.jsx` memperkenalkan model *pull-based* di mana mitra penerima membuat permohonan bantuan darurat (`EmergencyFoodRequest`), lalu mencocokkan dan mengalokasikan surplus donor yang tersedia. Kedaruratan logistik sering kali memicu godaan operasional untuk melonggarkan batas keamanan pangan demi mempercepat bantuan pangan ke korban bencana.
 
 ### Keputusan
 **Status: `ACCEPTED`**
-1. Perintah `npm test` dikonfigurasikan menggunakan flag `jest --runInBand` di `package.json`.
-2. Pengujian integrasi dieksekusi secara sekuensial sehingga setiap skenario uji transaksi ACID, *pessimistic lock*, dan *doorstep rejection* berjalan di atas state database yang bersih, deterministik, dan bebas interferensi.
-3. Total waktu eksekusi sekuensial tetap sangat cepat (< 3.5 detik untuk 47 pengujian dan 8 test suite), sehingga tidak memperlambat alur kerja pengembang di Fedora VM.
+1. **Keamanan Pangan Mengesampingkan Kedaruratan Operasional:**
+   - Dalam kondisi bencana/darurat apa pun, donasi surplus yang berstatus `REVIEW` atau `REJECT` **DILARANG KERAS** dialokasikan ke permohonan bantuan darurat konsumsi manusia.
+   - Endpoint `/emergency-requests/:id/matching-surplus` secara mutlak hanya menyaring surplus listing dengan `safetyStatus === 'PASS'`.
+   - Endpoint `/emergency-requests/:id/allocate` memvalidasi ulang status FSG di dalam transaksi database sebelum commit; jika bukan `PASS`, transaksi langsung dibatalkan (`ROLLBACK`) dengan `422 Unprocessable Entity`.
+2. **Transaksi ACID Dwiarah:**
+   - Alokasi darurat mengikat `SurplusListing`, `EmergencyFoodRequest`, dan `RecipientCapacity` secara atomik di dalam `$transaction`.
+   - Kuota mitra pemohon dicadangkan otomatis untuk mencegah *overcapacity*.
+
+---
+
+## 15. ADR-015: Proteksi Tombstone & Soft Delete pada Penghapusan Data Multi-Device
+
+### Konteks
+Frontend REPLATE menggunakan arsitektur *local-first* dengan sinkronisasi hybrid ke Supabase / NestJS backend. Pada commit `bc7abb5`, frontend mengimplementasikan indeks *Tombstone* untuk mencatat ID rekaman yang sengaja dihapus oleh pengguna. Tanpa penandaan terhapus yang konsisten di backend, proses sinkronisasi background antar-peramban dapat menganggap rekaman yang masih ada di server sebagai data baru dan menghidupkannya kembali di peramban lokal (*zombie record resurrection*).
+
+### Keputusan
+**Status: `ACCEPTED`**
+1. Backend mengimplementasikan pola *soft delete* terstandarisasi dengan kolom `is_deleted: Boolean @default(false)` dan `deleted_at: DateTime?` pada entitas `surplus_listings` dan `emergency_food_requests`.
+2. Endpoint `DELETE /api/v1/surplus-listings/:id` dan `DELETE /api/v1/emergency-requests/:id` menandai `is_deleted = true` dan mencatat `AuditAction.DELETE`.
+3. Kueri koleksi `findAll` dan sinkronisasi secara default menambahkan klausa `WHERE is_deleted = false`.
+4. Endpoint audit tetap dapat menginspeksi rekaman terhapus untuk kebutuhan kepatuhan hukum dan keamanan pangan publik.
+
+---
+
+## 16. ADR-016: SOS Emergency Broadcast & Atestasi Darurat Tanpa Capacity Lock
+
+### Konteks
+Alur normal REPLATE bersifat *push-only* dari donor ke mitra, di mana surplus yang lolos verifikasi segera dialokasikan sehingga pool surplus tidak teralokasi (*unallocated pool*) sering kali kosong saat mitra posko mengajukan permohonan darurat. Untuk itu diperkenalkan sistem *pull-based* SOS Broadcast berbatas waktu (*expiry window* otomatis) yang menyiarkan kebutuhan posko ke penyedia surplus terdekat. Penyedia surplus yang memiliki stok siap santap dapat langsung mengonfirmasi kesediaan bantuan dalam satu klik tanpa harus mengisi formulir pelaporan surplus panjang terlebih dahulu.
+
+### Keputusan
+**Status: `ACCEPTED` (Fase 13 - TASK-013)**
+1. **Otomatisasi Transaksi Satu-Klik:**
+   - Saat supplier mengonfirmasi bantuan melalui endpoint `POST /api/v1/emergency-broadcasts/:broadcastId/respond`, backend secara atomik di dalam `$transaction` PostgreSQL mengeksekusi:
+     - Kunci baris broadcast via `FOR UPDATE` untuk mencegah race condition.
+     - Pembentukan entitas `SurplusListing` dengan penanda khusus `isEmergencyResponse = true` dan status awal `MATCHED`.
+     - Penerbitan `FoodSafetyAssessment` berstatus `PASS` berbasis atestasi donor darurat (donor secara sadar mengonfirmasi bahwa makanan disiapkan secara higienis, bersih, dan aman dikonsumsi).
+     - Pembentukan `RescueJourney` berstatus `MATCHED` dan `JourneyTimelineEvent`.
+     - Pembaruan status siaran `EmergencyBroadcast` ke `RESPONDED` dan permohonan `EmergencyFoodRequest` ke `ALLOCATED`.
+     - Pencatatan jejak audit komprehensif pada `audit_logs`.
+2. **Pengecualian Capacity Lock untuk Respons Darurat:**
+   - Respons bantuan darurat **tidak melakukan pessimistic lock kuota kapasitas** (`SELECT ... FOR UPDATE` pada `recipient_capacities`).
+   - *Rasional:* Permohonan darurat merupakan intervensi krisis posko bencana/pengungsi di mana bantuan pangan harus dapat disalurkan dengan hambatan minimum. Penolakan donasi akibat kuota harian sistematis terhitung penuh akan menggagalkan penyelamatan jiwa. Pelacakan logistik fisik tetap berjalan normal melalui entitas `RescueJourney`, dan konfirmasi penerimaan fisik tetap dilakukan oleh mitra penerima via endpoint `confirm-receipt`.
+3. **Pencegahan Respons Duplikat & Batas Waktu Ketat:**
+   - Penerapan constraint unik `@@unique([broadcastId, supplierOrgId])` untuk mencegah donor yang sama mengonfirmasi ganda.
+   - Siaran yang telah kedaluwarsa (`expiresAt <= NOW()`) secara deterministik ditolak dengan `422 Unprocessable Entity` dan otomatis beralih ke status `EXPIRED` baik via pemanggilan endpoint aktif maupun background worker berkala.

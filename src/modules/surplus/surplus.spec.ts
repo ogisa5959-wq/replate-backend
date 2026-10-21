@@ -219,4 +219,110 @@ describe('SurplusService & ExpiryWorker (Integration)', () => {
     });
     expect(updatedListing!.currentLifecycleStatus).toBe(ListingLifecycleStatus.CANCELLED);
   });
+
+  describe('Tombstone Deletion & State Guard (Fase 11 - TASK-011)', () => {
+    it('should soft delete a REPORTED listing and record audit log', async () => {
+      const listing = await surplusService.create(
+        {
+          foodName: 'Kue Basah Sisa Pameran',
+          foodCategory: FoodCategory.BAKERY_PASTRY,
+          quantityKg: 3,
+          portions: 15,
+          condition: FoodCondition.FRESH,
+          packagingStatus: PackagingStatus.INTACT_SEALED,
+          hygieneScore: 90,
+          preparedAt: new Date().toISOString(),
+          safetyConditionId: 'no_visible_damage',
+          storageHistoryId: 'known_compliant',
+        },
+        mockSupplier,
+      );
+
+      const deleteRes = await surplusService.delete(listing.id, mockSupplier);
+      expect(deleteRes.success).toBe(true);
+      expect(deleteRes.statusCode).toBe(200);
+
+      // Verify listing is marked isDeleted in DB
+      const dbListing = await prisma.surplusListing.findUnique({
+        where: { id: listing.id },
+      });
+      expect(dbListing!.isDeleted).toBe(true);
+      expect(dbListing!.deletedAt).toBeDefined();
+
+      // Verify excluded from findOne
+      await expect(surplusService.findOne(listing.id)).rejects.toThrow('tidak ditemukan');
+
+      // Verify excluded from findAll
+      const all = await surplusService.findAll({});
+      expect(all.some(l => l.id === listing.id)).toBe(false);
+
+      // Verify audit log recorded
+      const audit = await prisma.auditLog.findFirst({
+        where: {
+          tableName: 'surplus_listings',
+          recordId: listing.id,
+          action: 'DELETE' as any,
+        },
+      });
+      expect(audit).toBeDefined();
+    });
+
+    it('should reject deletion of a listing already in MATCHED status', async () => {
+      const listing = await surplusService.create(
+        {
+          foodName: 'Roti Gandum Terikat Mitra',
+          foodCategory: FoodCategory.BAKERY_PASTRY,
+          quantityKg: 5,
+          portions: 20,
+          condition: FoodCondition.FRESH,
+          packagingStatus: PackagingStatus.INTACT_SEALED,
+          hygieneScore: 90,
+          preparedAt: new Date().toISOString(),
+          safetyConditionId: 'no_visible_damage',
+          storageHistoryId: 'known_compliant',
+        },
+        mockSupplier,
+      );
+
+      // Manually simulate transition to MATCHED
+      await prisma.surplusListing.update({
+        where: { id: listing.id },
+        data: { currentLifecycleStatus: ListingLifecycleStatus.MATCHED },
+      });
+
+      await expect(surplusService.delete(listing.id, mockSupplier)).rejects.toThrow(
+        'sudah terikat mitra atau logistik dan tidak dapat dihapus',
+      );
+    });
+
+    it('should reject deletion by non-owner without admin privilege', async () => {
+      const listing = await surplusService.create(
+        {
+          foodName: 'Donat Cokelat Milik Toko A',
+          foodCategory: FoodCategory.BAKERY_PASTRY,
+          quantityKg: 2,
+          portions: 10,
+          condition: FoodCondition.FRESH,
+          packagingStatus: PackagingStatus.INTACT_SEALED,
+          hygieneScore: 90,
+          preparedAt: new Date().toISOString(),
+          safetyConditionId: 'no_visible_damage',
+          storageHistoryId: 'known_compliant',
+        },
+        mockSupplier,
+      );
+
+      const unauthorizedUser = {
+        id: '20000000-0000-0000-0000-000000000099',
+        email: 'other_supplier@replate.id',
+        fullName: 'Other Donor',
+        role: 'SUPPLIER',
+        organizationId: '00000000-0000-0000-0000-000000000099',
+      };
+
+      await expect(surplusService.delete(listing.id, unauthorizedUser as any)).rejects.toThrow(
+        'Anda tidak memiliki hak akses',
+      );
+    });
+  });
 });

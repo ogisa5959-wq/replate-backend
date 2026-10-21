@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CancelJourneyDto {
   @ApiProperty({
@@ -10,4 +10,29 @@ export class CancelJourneyDto {
   @IsNotEmpty({ message: 'Alasan pembatalan wajib diisi untuk catatan audit trail' })
   @MinLength(5, { message: 'Alasan pembatalan minimal 5 karakter' })
   cancellationReason!: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Penanda bahwa pembatalan disebabkan oleh insiden kendala armada/kemasan di perjalanan (in-transit)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isIncidentReport?: boolean;
+
+  @ApiPropertyOptional({
+    example: 'Budi Santoso (Kurir)',
+    description: 'Identitas pihak atau koordinator yang melaporkan kendala logistik',
+  })
+  @IsOptional()
+  @IsString()
+  issueReportedBy?: string;
+
+  @ApiPropertyOptional({
+    example: 'Kendaraan mogok di tol lingkar luar, pendingin mati lebih dari 3 jam',
+    description: 'Catatan tambahan terkait penolakan fisik atau insiden',
+  })
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
+

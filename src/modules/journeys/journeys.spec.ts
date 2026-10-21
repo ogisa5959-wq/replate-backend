@@ -225,4 +225,65 @@ describe('JourneysService (Lifecycle, Concurrency & Doorstep Rejection)', () => 
     expect(auditLog).toBeDefined();
     expect(auditLog!.reason).toBe(rejectionReason);
   });
+
+  describe('In-Transit Logistics Incidents (Fase 12 - TASK-012)', () => {
+    it('should cancel journey with in-transit incident metadata and label timeline [KENDALA PENGIRIMAN]', async () => {
+      const recipient = await prisma.recipientProfile.findFirst({
+        where: { organizationId: mockMitra.organizationId },
+      });
+
+      const listing = await prisma.surplusListing.create({
+        data: {
+          donorOrganizationId: mockSupplier.organizationId,
+          reporterUserId: mockSupplier.id,
+          foodName: 'Sop Daging Kambing',
+          foodCategory: FoodCategory.COOKED_MEALS,
+          quantityKg: 6,
+          portions: 15,
+          condition: FoodCondition.FRESH,
+          packagingStatus: PackagingStatus.INTACT_SEALED,
+          hygieneScore: 90,
+          preparedAt: new Date(),
+          safeUntilTimestamp: new Date(Date.now() + 3 * 3600 * 1000),
+          currentLifecycleStatus: ListingLifecycleStatus.ASSESSED,
+        },
+      });
+
+      const journey = await journeysService.assignDestination(
+        listing.id,
+        { recipientId: recipient!.id },
+        mockSupplier,
+      );
+
+      await journeysService.advanceStatus(journey.id, {}, mockSupplier);
+
+      const cancelResult = await journeysService.cancel(
+        journey.id,
+        {
+          cancellationReason: 'Boks pendingin pecah saat motor kurir terjatuh',
+          isIncidentReport: true,
+          issueReportedBy: 'Budi (Kurir Logistik)',
+          note: 'Makanan tumpah di jalan tol lingkar barat',
+        },
+        mockSupplier,
+      );
+
+      expect(cancelResult.currentStatus).toBe(JourneyStatus.CANCELLED);
+
+      // Verify timeline event note contains [KENDALA PENGIRIMAN] and reporter
+      const events = await prisma.journeyTimelineEvent.findMany({
+        where: { journeyId: journey.id },
+        orderBy: { timestamp: 'desc' },
+      });
+      expect(events[0].note).toContain('[KENDALA PENGIRIMAN]');
+      expect(events[0].note).toContain('Budi (Kurir Logistik)');
+
+      // Verify audit log reason contains [KENDALA PENGIRIMAN]
+      const audit = await prisma.auditLog.findFirst({
+        where: { recordId: journey.id, action: AuditAction.CANCEL },
+      });
+      expect(audit).toBeDefined();
+      expect(audit!.reason).toContain('[KENDALA PENGIRIMAN]');
+    });
+  });
 });

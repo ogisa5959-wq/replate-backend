@@ -10,6 +10,7 @@ import { RecipientsModule } from './modules/recipients/recipients.module';
 import { JourneysModule } from './modules/journeys/journeys.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { EmergencyModule } from './modules/emergency/emergency.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AdminModule } from './modules/admin/admin.module';
     JourneysModule,
     AnalyticsModule,
     AdminModule,
+    EmergencyModule,
   ],
   controllers: [AppController],
   providers: [],

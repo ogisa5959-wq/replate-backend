@@ -1,5 +1,10 @@
 # REPLATE Backend — Master Implementation Plan & Frontend Audit
 
+> [!NOTE]
+> **Status Perencanaan Ekstensi (Fase 9 s/d 12):** `DONE` (Telah Berhasil Dieksekusi & Teruji Penuh)
+> **Fase 13 (Sistem SOS Emergency Food Broadcast):** `PLANNED` (Desain final & siap dieksekusi)
+> Modul backend untuk Distribusi Darurat (Fase 9), Registrasi Akun Mandiri (Fase 10), Tombstone Deletion (Fase 11), dan Insiden Transit (Fase 12) telah diimplementasikan lengkap dengan 62 unit/integration tests lulus 100%. Saat ini direncanakan perluasan arsitektur SOS Broadcast terkoordinasi (Fase 13) untuk menjembatani permintaan darurat mitra dengan donor katering/restoran terdekat.
+
 Dokumen ini memuat hasil audit menyeluruh terhadap kode sumber frontend **REPLATE**, inventaris fitur, pemetaan kebutuhan backend, analisis risiko teknis, serta *roadmap* implementasi bertahap untuk pengembangan backend NestJS dan PostgreSQL.
 
 ---
@@ -71,13 +76,18 @@ Berikut adalah urutan implementasi backend yang dirancang secara bertahap, berla
 
 ```mermaid
 flowchart LR
-    P1["Fase 1: Setup & Fondasi Database"] --> P2["Fase 2: Auth & RBAC"]
-    P2 --> P3["Fase 3: Food Safety & Surplus Intake"]
-    P3 --> P4["Fase 4: Scoring & Matching Engine"]
-    P4 --> P5["Fase 5: Journey & Concurrency Lock"]
-    P5 --> P6["Fase 6: Analytics & Performance KPI"]
-    P6 --> P7["Fase 7: Integrasi Frontend Bertahap"]
-    P7 --> P8["Fase 8: Hardening & Testing"]
+    P1["Fase 1: Setup & Fondasi Database (DONE)"] --> P2["Fase 2: Auth & RBAC (DONE)"]
+    P2 --> P3["Fase 3: Food Safety & Surplus Intake (DONE)"]
+    P3 --> P4["Fase 4: Scoring & Matching Engine (DONE)"]
+    P4 --> P5["Fase 5: Journey & Concurrency Lock (DONE)"]
+    P5 --> P6["Fase 6: Analytics & Performance KPI (DONE)"]
+    P6 --> P7["Fase 7: Integrasi Frontend Bertahap (DONE)"]
+    P7 --> P8["Fase 8: Hardening & Testing (DONE)"]
+    P8 --> P9["Fase 9: Emergency Requisition (DONE)"]
+    P9 --> P10["Fase 10: User Self-Register (DONE)"]
+    P10 --> P11["Fase 11: Tombstone Deletion (DONE)"]
+    P11 --> P12["Fase 12: In-Transit Incidents (DONE)"]
+    P12 --> P13["Fase 13: SOS Emergency Broadcast (PLANNED)"]
 ```
 
 ---
@@ -323,6 +333,151 @@ flowchart LR
   - [x] Zero high-severity security vulnerabilities.
   - [x] Eksekusi kueri indeks terverifikasi optimal dengan EXPLAIN ANALYZE.
   - [x] Dokumentasi OpenAPI lengkap mencakup seluruh endpoint MVP.
+
+---
+
+### Fase 9: Modul Distribusi Darurat (Emergency Food Requisition Engine)
+- **ID Tugas:** `TASK-009`
+- **Status:** `DONE`
+- **Tujuan & Ruang Lingkup:** Menyediakan modul backend lengkap untuk menangani permohonan bantuan pangan darurat dari mitra penerima (`EmergencyFoodRequest`), pencocokan dengan surplus aktif yang lolos FSG `PASS`, dan alokasi atomik terproteksi transaksi, diselaraskan 100% dengan kebutuhan halaman `EmergencyDistribution.jsx` dan utilitas penyimpanan `storage.js` di `replate-frontend (Copy for testing)`.
+- **Dependensi:** `TASK-001` s/d `TASK-005`.
+- **Risiko:** Alokasi surplus ke emergency request berpotensi membocorkan surplus yang belum lolos uji keselamatan atau melebihi kapasitas fisik mitra. Mitigasi: Validasi mutlak `safetyStatus === 'PASS'` dan pencadangan kuota atomik di `$transaction`.
+- **Scope Fitur:**
+  - Penambahan model `EmergencyFoodRequest` dan enum `EmergencyUrgencyLevel`, `EmergencyRequestStatus` pada `schema.prisma`.
+  - Endpoint `POST /api/v1/emergency-requests` (membuat permohonan darurat, mendukung pemetaan langsung dari formulir `EmergencyDistribution.jsx`).
+  - Endpoint `GET /api/v1/emergency-requests` (daftar permohonan aktif & riwayat dengan filter status/urgency).
+  - Endpoint `GET /api/v1/emergency-requests/:id` (detail permohonan beserta relasi).
+  - Endpoint `GET /api/v1/emergency-requests/:id/matching-surplus` (pencocokan deterministik dengan surplus donor yang berstatus `PASS` dan layak konsumsi manusia `REDISTRIBUTE`/`PROCESS`).
+  - Endpoint `POST /api/v1/emergency-requests/:id/allocate` (alokasi surplus ke permohonan darurat, pembentukan `RescueJourney`, pencadangan kuota mitra, dan pencatatan audit log).
+  - Endpoint `PATCH /api/v1/emergency-requests/:id/status` (transisi status ke `FULFILLED` atau `CANCELLED` dengan catatan).
+  - Endpoint `DELETE /api/v1/emergency-requests/:id` (soft-delete / tombstone pencegah resureksi).
+- **Deliverables:**
+  - `src/modules/emergency/emergency.module.ts`
+  - `src/modules/emergency/emergency.controller.ts`
+  - `src/modules/emergency/emergency.service.ts`
+  - `src/modules/emergency/dto/*`
+  - `src/modules/emergency/emergency.spec.ts`
+
+---
+
+### Fase 10: Registrasi Akun Mandiri (Self-Onboarding & Profile Provisioning)
+- **ID Tugas:** `TASK-010`
+- **Status:** `DONE`
+- **Tujuan & Ruang Lingkup:** Menyediakan endpoint pendaftaran pengguna baru (`POST /api/v1/auth/register`) yang kompatibel langsung dengan modal pendaftaran `LoginModal.jsx` dan `storage.js` di `replate-frontend (Copy for testing)`, otomatis membuat entitas organisasi dan inisialisasi profil kapasitas mitra.
+- **Dependensi:** `TASK-002`.
+- **Scope Fitur:**
+  - Endpoint `POST /api/v1/auth/register` (menerima `username`, `email`, `password`, `name`, `organizationName` / alias `organization`, `role` case-insensitive).
+  - Validasi keunikan username dan email, hashing password dengan bcrypt/Argon2id.
+  - Auto-provisioning: jika peran `MITRA`, otomatis membuat `RecipientProfile` dengan kuota kapasitas harian default (50 kg).
+  - Pengembalian access token dan set refresh token cookie.
+- **Deliverables:**
+  - `src/modules/auth/dto/register.dto.ts`
+  - Pembaruan `src/modules/auth/auth.controller.ts` dan `auth.service.ts`
+  - Pengujian `src/modules/auth/auth.spec.ts`
+
+---
+
+### Fase 11: Penghapusan Aman & Tombstone Management (Surplus & Emergency)
+- **ID Tugas:** `TASK-011`
+- **Status:** `DONE`
+- **Tujuan & Ruang Lingkup:** Menyediakan endpoint penghapusan aman (*soft delete / tombstone*) pada surplus listings dan emergency requests yang sinkron dengan indeks tombstone peramban lokal (`recordDeletedReportId` & `recordDeletedEmergencyId`) untuk mencegah *zombie record resurrection*.
+- **Dependensi:** `TASK-003`, `TASK-009`.
+- **Scope Fitur:**
+  - Endpoint `DELETE /api/v1/surplus-listings/:id`.
+  - State guard: penolakan penghapusan jika surplus sudah `MATCHED`, `RESCUE_INITIATED`, atau `RECEIVED`.
+  - Endpoint `DELETE /api/v1/emergency-requests/:id`.
+  - Audit trail `AuditAction.DELETE` dan penandaan `is_deleted = true`, `deleted_at = NOW()`.
+- **Deliverables:**
+  - Pembaruan `src/modules/surplus/surplus.controller.ts` & `surplus.service.ts`
+
+---
+
+### Fase 12: Penguatan Pencatatan Insiden Transit (In-Transit Logistics Incidents)
+- **ID Tugas:** `TASK-012`
+- **Status:** `DONE`
+- **Tujuan & Ruang Lingkup:** Memperkaya penanganan pembatalan perjalanan saat status `RESCUE_INITIATED` dengan metadata kendala logistik nyata (`isIncidentReport`, `issueReportedBy`), selaras dengan modal pelaporan kendala di `JourneyTimeline.jsx`.
+- **Dependensi:** `TASK-005`.
+- **Scope Fitur:**
+  - Perluasan `CancelJourneyDto` dengan opsi insiden (`isIncidentReport: boolean`, `issueReportedBy: string`, `note: string`).
+  - Pelabelan `[KENDALA PENGIRIMAN]` pada `JourneyTimelineEvent` dan `AuditLog`.
+  - Pelepasan reservasi kuota mitra penerima secara atomik tanpa reroute otomatis.
+- **Deliverables:**
+  - Pembaruan `src/modules/journeys/dto/cancel-journey.dto.ts` & `journeys.service.ts`
+
+---
+
+### Fase 13: Sistem SOS Emergency Food Broadcast (Penyedia Surplus & Posko Bencana)
+- **ID Tugas:** `TASK-013`
+- **Status:** `DONE`
+- **Tujuan & Ruang Lingkup:** Mengatasi keterbatasan alur *push-only* (di mana surplus selalu langsung teralokasi sehingga pencarian pasokan darurat sering kosong) dengan mengimplementasikan sistem *pull-based* terkoordinasi berupa SOS Emergency Broadcast. Ketika mitra mengajukan permohonan pangan darurat, sistem otomatis mempublikasikan siaran SOS berbatas waktu ke penyedia surplus/katering terdekat. Donor dapat langsung mengonfirmasi kesediaan bantuan melalui modal satu-klik tanpa harus mengisi formulir pelaporan panjang, dan sistem secara atomik membangkitkan transaksi logistik penyelamatan pangan darurat.
+- **Dependensi:** `TASK-009` (Emergency Requisition), `TASK-005` (Journeys & Logistics), `TASK-003` (Food Safety Gate).
+- **Risiko Teknis & Mitigasi:**
+  - *Race condition respons ganda:* Beberapa donor merespons siaran yang sama secara simultan. Mitigasi: Transaksi PostgreSQL atomik `$transaction` dengan *pessimistic row locking* `FOR UPDATE` pada tabel `emergency_broadcasts` dan *unique constraint* `@@unique([broadcastId, supplierOrgId])`.
+  - *Bypass keamanan pangan pada kondisi krisis:* Makanan darurat disalurkan tanpa kejelasan keamanan. Mitigasi: Atestasi eksplisit keselamatan oleh donor pada saat konfirmasi, otomatis dicatat pada `food_safety_assessments` sebagai atestasi darurat (`safetyStatus: PASS`, penanda `isEmergencyResponse: true`), disertai pencatatan audit trail lengkap.
+  - *Broadcast kedaluwarsa tetap direspons:* Mitigasi: Validasi ganda (lazy expiry saat pemanggilan endpoint aktif dan cron worker berkala tiap 5 menit).
+- **Scope Fitur:**
+  - **Skema Database Prisma:**
+    - Model `EmergencyBroadcast`: Menampung data siaran darurat (`emergencyRequestId`, `recipientOrgName`, `recipientLocation`, `neededFoodType`, `requestedPortions`, `targetQuantityKg`, `urgencyLevel`, `urgencyDeadline`, `urgencyReason`, `contactPerson`, `contactPhone`, `radiusKm`, `expiresAt`, `status`).
+    - Model `SupplierBroadcastResponse`: Menghubungkan respon donor dengan siaran (`broadcastId`, `supplierOrgId`, `supplierUserId`, `surplusListingId`, `journeyId`, `status`, `respondedAt`).
+    - Enum `BroadcastStatus` (`ACTIVE`, `RESPONDED`, `EXPIRED`, `FULFILLED`, `CANCELLED`) dan `SupplierResponseStatus` (`CONFIRMED`, `IN_TRANSIT`, `DELIVERED`, `CANCELLED`).
+    - Penambahan penanda `isEmergencyResponse: Boolean @default(false)` pada model `SurplusListing`.
+  - **Logika Batas Waktu (*Expiry Engine*):**
+    - `CRITICAL`: Kedaluwarsa dalam 2 jam (`NOW() + 2h`).
+    - `HIGH`: Kedaluwarsa dalam 4 jam (`NOW() + 4h`).
+    - `MEDIUM`: Kedaluwarsa pada akhir hari operasional (`23:59:59 WIB`).
+  - **Endpoint REST API (`/api/v1/emergency-broadcasts`):**
+    - `GET /api/v1/emergency-broadcasts/active`: Khusus role `SUPPLIER`, mengembalikan seluruh siaran aktif yang belum kedaluwarsa dengan penanda status respon.
+    - `GET /api/v1/emergency-broadcasts/my-responses`: Khusus role `SUPPLIER`, riwayat bantuan darurat yang pernah dikonfirmasi beserta status perjalanannya.
+    - `POST /api/v1/emergency-broadcasts/:broadcastId/respond`: Khusus role `SUPPLIER`, eksekusi atomik konfirmasi bantuan:
+      1. Kunci baris broadcast via `FOR UPDATE` dan validasi status `ACTIVE`.
+      2. Otomatis buat entitas `SurplusListing` dengan tanda `isEmergencyResponse = true` dan status `MATCHED`.
+      3. Otomatis terbitkan `FoodSafetyAssessment` (PASS berbasis atestasi donor darurat) dan `RescueScoreAssessment`.
+      4. Otomatis buat entitas `RescueJourney` berstatus `MATCHED` dan `JourneyTimelineEvent`.
+      5. Catat `SupplierBroadcastResponse`.
+      6. Transisi status `EmergencyBroadcast` ke `RESPONDED` dan `EmergencyFoodRequest` ke `ALLOCATED`.
+      7. Catat entri `AuditLog`.
+    - `PATCH /api/v1/emergency-broadcasts/:broadcastId/status`: Manajemen status administratif (mis. pembatalan posko).
+  - **Worker Berkala (*Scheduled Background Expiry*):**
+    - Integrasi ke `SurplusExpiryWorker` (`@nestjs/schedule` cron 5 menit) untuk menandai siaran melewati `expiresAt` menjadi `EXPIRED`.
+  - **Integrasi Antarmuka Klien (`replate-frontend (Copy for testing)`):**
+    - Indikator visual titik merah (*red dot badge*) pada item navigasi `SOS` di `Navbar.jsx` jika ada siaran aktif.
+    - Halaman baru `SOSHub.jsx` untuk penyedia surplus: tab *SOS Aktif* dengan timer hitung mundur real-time dan tab *Riwayat Respons*.
+    - Modal konfirmasi bantuan satu-klik dengan ringkasan kebutuhan posko dan formulir catatan ringkas.
+    - Sinkronisasi modul `api.emergencyBroadcasts` di `api.js` dan fungsi penunjang di `storage.js`.
+- **Deliverables:**
+  - `prisma/schema.prisma` & file migrasi database Prisma baru.
+  - `src/modules/emergency/broadcast.service.ts` & `broadcast.controller.ts`.
+  - `src/modules/emergency/dto/respond-broadcast.dto.ts`.
+  - Integrasi otomatisasi pada `src/modules/emergency/emergency.service.ts`.
+  - Pembaruan `src/modules/surplus/surplus-expiry.worker.ts`.
+  - Test suite komprehensif di `src/modules/emergency/emergency.spec.ts`.
+  - Halaman `src/pages/SOSHub.jsx`, pembaruan `Navbar.jsx`, `App.jsx`, `storage.js`, dan `api.js` di frontend testing.
+  - Dokumentasi perubahan di `FRONTEND_TESTING_CHANGELOG.md` dan ADR di `backend/DECISIONS.md`.
+- **Wajib Ada Pengujian (12 Skenario Uji T-SOS-01 s/d T-SOS-12):**
+  1. Pembuatan request darurat otomatis memicu pembentukan `EmergencyBroadcast`.
+  2. Perhitungan `expiresAt` presisi untuk tingkat urgensi `CRITICAL` (2 jam).
+  3. Perhitungan `expiresAt` presisi untuk tingkat urgensi `MEDIUM` (akhir hari).
+  4. Supplier merespons siaran aktif sukses membuat alur `SurplusListing` $\to$ `RescueJourney` $\to$ `ALLOCATED`.
+  5. Penolakan respons duplikat oleh supplier yang sama (`409 Conflict`).
+  6. Penolakan respons terhadap siaran yang telah kedaluwarsa (`422 Unprocessable Entity`).
+  7. Penolakan otorisasi jika role selain `SUPPLIER` mencoba merespons (`403 Forbidden`).
+  8. Eksekusi cron worker expiry mengubah siaran overdue menjadi `EXPIRED`.
+  9. Siaran kedaluwarsa tidak muncul pada endpoint `GET /active`.
+  10. Endpoint `GET /my-responses` mengembalikan data historis donasi darurat donor.
+  11. Atestasi darurat FSG mencatat alasan evaluasi dan penanda `isEmergencyResponse = true`.
+  12. Pembatalan tiket darurat oleh mitra otomatis membatalkan broadcast (`CANCELLED`).
+- **Kriteria Penerimaan / Definition of Done (DoD):**
+  - [x] Migrasi database Prisma berhasil dieksekusi di PostgreSQL lokal (`20261021105138_add_sos_broadcasts`).
+  - [x] Seluruh endpoint siaran darurat terproteksi autentikasi JWT dan RBAC peran yang tepat (`Roles(Role.SUPPLIER)`).
+  - [x] Operasi respon broadcast berjalan 100% atomik di dalam `$transaction` dengan row locking `FOR UPDATE`.
+  - [x] Seluruh 12 skenario pengujian unit/integrasi baru dan 62 pengujian terdahulu lulus 100% (total 74/74 test backend hijau).
+  - [x] Antarmuka frontend testing menampilkan badge navbar, halaman SOSHub, timer hitung mundur, dan alur konfirmasi tanpa error (73/73 test frontend hijau).
+  - [x] Dokumentasi `FRONTEND_TESTING_CHANGELOG.md` dan `DECISIONS.md` telah disinkronkan.
+  - [ ] Seluruh endpoint siaran darurat terproteksi autentikasi JWT dan RBAC peran yang tepat.
+  - [ ] Operasi respon broadcast berjalan 100% atomik di dalam `$transaction`.
+  - [ ] Seluruh 12 skenario pengujian unit/integrasi baru dan 62 pengujian terdahulu lulus 100% (total 74+ test hijau).
+  - [ ] Antarmuka frontend testing menampilkan badge navbar, halaman SOSHub, timer hitung mundur, dan alur konfirmasi tanpa error.
+  - [ ] Dokumentasi `FRONTEND_TESTING_CHANGELOG.md` dan `DECISIONS.md` telah disinkronkan.
 
 ---
 

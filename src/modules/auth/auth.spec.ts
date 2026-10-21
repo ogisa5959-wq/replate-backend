@@ -104,4 +104,78 @@ describe('AuthService (Integration)', () => {
     expect(profile.email).toBe('admin@replate.id');
     expect(profile.organization.name).toContain('REPLATE');
   });
+
+  describe('Self-Registration (Fase 10 - TASK-010)', () => {
+    const testSupplierEmail = `supplier_${Date.now()}@replate.id`;
+    const testMitraEmail = `mitra_${Date.now()}@replate.id`;
+
+    it('should register a new SUPPLIER user and organization successfully', async () => {
+      const result = await authService.register({
+        username: 'test_supplier',
+        email: testSupplierEmail,
+        password: 'Password123!',
+        name: 'Budi Santoso',
+        organizationName: 'Katering Berkah Mandiri',
+        role: 'SUPPLIER' as any,
+      });
+
+      expect(result).toBeDefined();
+      expect(result.user.email).toBe(testSupplierEmail);
+      expect(result.user.role).toBe('SUPPLIER');
+      expect(result.user.organization.name).toBe('Katering Berkah Mandiri');
+      expect(result.accessToken).toBeDefined();
+      expect(result.refreshToken).toBeDefined();
+    });
+
+    it('should register a new MITRA user and auto-provision RecipientProfile with daily capacity', async () => {
+      const result = await authService.register({
+        username: 'test_mitra',
+        email: testMitraEmail,
+        password: 'Password123!',
+        name: 'Siti Rahmawati',
+        organizationName: 'Dapur Dhuafa Peduli',
+        role: 'MITRA' as any,
+      });
+
+      expect(result).toBeDefined();
+      expect(result.user.role).toBe('MITRA');
+
+      // Check auto-provisioned recipient profile & capacity
+      const profile = await prisma.recipientProfile.findUnique({
+        where: { organizationId: result.user.organization.id },
+        include: { capacities: true },
+      });
+
+      expect(profile).toBeDefined();
+      expect(Number(profile!.dailyMaxCapacityKg)).toBe(50.0);
+      expect(profile!.capacities.length).toBeGreaterThanOrEqual(1);
+      expect(Number(profile!.capacities[0].availableCapacityKg)).toBe(50.0);
+    });
+
+    it('should reject registration if email is already taken', async () => {
+      await expect(
+        authService.register({
+          username: 'duplicate_user',
+          email: testSupplierEmail,
+          password: 'Password123!',
+          name: 'Duplikat',
+          organizationName: 'Org Duplikat',
+          role: 'SUPPLIER' as any,
+        }),
+      ).rejects.toThrow('Email sudah terdaftar');
+    });
+
+    it('should reject registration if role is ADMIN', async () => {
+      await expect(
+        authService.register({
+          username: 'fake_admin',
+          email: 'fake_admin@replate.id',
+          password: 'Password123!',
+          name: 'Fake Admin',
+          organizationName: 'Fake HQ',
+          role: 'ADMIN' as any,
+        }),
+      ).rejects.toThrow('Pendaftaran role ADMIN tidak diizinkan melalui registrasi publik');
+    });
+  });
 });

@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
@@ -184,7 +185,7 @@ export class SurplusService {
     category?: FoodCategory;
     donorId?: string;
   }) {
-    const where: any = {};
+    const where: any = { isDeleted: false };
     if (params.status) where.currentLifecycleStatus = params.status;
     if (params.category) where.foodCategory = params.category;
     if (params.donorId) where.donorOrganizationId = params.donorId;
@@ -217,6 +218,7 @@ export class SurplusService {
     return this.prisma.surplusListing.findMany({
       where: {
         donorOrganizationId: user.organizationId,
+        isDeleted: false,
       },
       include: {
         safetyAssessment: true,
@@ -261,7 +263,7 @@ export class SurplusService {
       },
     });
 
-    if (!listing) {
+    if (!listing || listing.isDeleted) {
       throw new NotFoundException(`Surplus listing dengan ID ${id} tidak ditemukan`);
     }
 
@@ -408,6 +410,65 @@ export class SurplusService {
         safetyStatus: updatedSafety.status,
         route: updatedRoute.route,
         safetyDetails: updatedSafety,
+      };
+    });
+  }
+
+  async delete(id: string, user: AuthenticatedUser) {
+    const listing = await this.prisma.surplusListing.findUnique({
+      where: { id },
+      include: { donorOrganization: true },
+    });
+
+    if (!listing || listing.isDeleted) {
+      throw new NotFoundException(`Surplus listing dengan ID ${id} tidak ditemukan`);
+    }
+
+    if (user.role !== UserRole.ADMIN && listing.donorOrganizationId !== user.organizationId) {
+      throw new ForbiddenException('Anda tidak memiliki hak akses untuk menghapus laporan surplus ini');
+    }
+
+    // State Machine Guard: only REPORTED or ASSESSED can be deleted
+    if (
+      listing.currentLifecycleStatus !== ListingLifecycleStatus.REPORTED &&
+      listing.currentLifecycleStatus !== ListingLifecycleStatus.ASSESSED
+    ) {
+      throw new BadRequestException(
+        `Laporan surplus berstatus ${listing.currentLifecycleStatus} sudah terikat mitra atau logistik dan tidak dapat dihapus. Gunakan pembatalan rute/journey.`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.surplusListing.update({
+        where: { id },
+        data: {
+          isDeleted: true,
+          deletedAt: new Date(),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          tableName: 'surplus_listings',
+          recordId: id,
+          action: AuditAction.DELETE,
+          actorUserId: user.id,
+          previousState: {
+            currentLifecycleStatus: listing.currentLifecycleStatus,
+            foodName: listing.foodName,
+          },
+          newState: {
+            isDeleted: true,
+            deletedAt: updated.deletedAt,
+          },
+          reason: 'Penghapusan laporan surplus makanan via soft delete (Tombstone)',
+        },
+      });
+
+      return {
+        success: true,
+        statusCode: 200,
+        message: 'Laporan surplus berhasil dihapus.',
       };
     });
   }

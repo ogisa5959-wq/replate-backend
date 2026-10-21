@@ -3,6 +3,8 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
+import { OrganizationType, RecipientType, UserRole } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 
@@ -197,5 +199,122 @@ export class AuthService {
         recipientProfile: user.organization.recipientProfile,
       },
     };
+  }
+
+  async register(registerDto: RegisterDto) {
+    if (registerDto.role === UserRole.ADMIN) {
+      throw new BadRequestException('Pendaftaran role ADMIN tidak diizinkan melalui registrasi publik');
+    }
+
+    const existingUser = await this.prisma.user.findFirst({
+      where: { email: registerDto.email },
+    });
+
+    if (existingUser) {
+      throw new BadRequestException('Email sudah terdaftar');
+    }
+
+    const passwordHash = await argon2.hash(registerDto.password);
+
+    return this.prisma.$transaction(async (tx) => {
+      const orgType = registerDto.role === UserRole.SUPPLIER ? OrganizationType.SUPPLIER : OrganizationType.RECIPIENT;
+
+      const organization = await tx.organization.create({
+        data: {
+          name: registerDto.organizationName || registerDto.organization || 'Organisasi Terdaftar',
+          type: orgType,
+          address: 'Alamat terdaftar mandiri',
+          isVerified: true,
+        },
+      });
+
+      const user = await tx.user.create({
+        data: {
+          email: registerDto.email,
+          fullName: registerDto.name,
+          passwordHash,
+          role: registerDto.role,
+          organizationId: organization.id,
+        },
+      });
+
+      if (registerDto.role === UserRole.MITRA) {
+        const profile = await tx.recipientProfile.create({
+          data: {
+            organizationId: organization.id,
+            recipientType: RecipientType.COMMUNITY_KITCHEN,
+            acceptedFoodCategories: ['COOKED_MEALS', 'BAKERY_PASTRY', 'FRESH_PRODUCE'],
+            hasRefrigeration: true,
+            hasFreezer: false,
+            dailyMaxCapacityKg: 50.0,
+            latitude: -6.2088,
+            longitude: 106.8456,
+          },
+        });
+
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+
+        await tx.recipientCapacity.create({
+          data: {
+            recipientId: profile.id,
+            capacityDate: today,
+            maxCapacityKg: 50.0,
+            allocatedCapacityKg: 0.0,
+            receivedCapacityKg: 0.0,
+            availableCapacityKg: 50.0,
+          },
+        });
+      }
+
+      const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+      const tokenHash = this.hashToken(rawRefreshToken);
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+
+      await tx.refreshToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+          isRevoked: false,
+        },
+      });
+
+      const accessSecret = this.configService.get<string>('jwt.accessSecret') || 'dev-insecure-access-secret-replace-in-production-min-32-chars';
+      const accessExpiresIn = this.configService.get<string>('jwt.accessExpiresIn') || '15m';
+
+      const accessToken = this.jwtService.sign(
+        {
+          sub: user.id,
+          email: user.email,
+          role: user.role,
+          organizationId: organization.id,
+        },
+        {
+          secret: accessSecret,
+          expiresIn: accessExpiresIn,
+        },
+      );
+
+      return {
+        user: {
+          id: user.id,
+          username: registerDto.username,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          avatarIcon: user.role === UserRole.SUPPLIER ? '🏪' : '🤝',
+          organization: {
+            id: organization.id,
+            name: organization.name,
+            type: organization.type,
+          },
+        },
+        accessToken,
+        refreshToken: rawRefreshToken,
+        expiresInSeconds: 900,
+      };
+    });
   }
 }

@@ -461,6 +461,86 @@ Mencatat seluruh aksi mutasi kritis untuk kepatuhan sistem dan keamanan pangan.
 
 ---
 
+### 3.13. Entitas `emergency_food_requests` (Ekspansi Permohonan Darurat)
+Mencatat kebutuhan makanan mendesak dari posko/dapur mitra penerima (`EmergencyDistribution.jsx`) untuk dialokasikan dengan surplus aktif.
+
+| Kolom | Tipe Data | Nullable | Keterangan & Constraints |
+|---|---|---|---|
+| `id` | `UUID` | No | Primary Key (`gen_random_uuid()`) |
+| `recipient_id` | `UUID` | No | FK ke `recipient_profiles(id)` ON DELETE CASCADE |
+| `requester_user_id` | `UUID` | No | FK ke `users(id)` ON DELETE RESTRICT |
+| `needed_food_type` | `VARCHAR(100)` | No | Opsi kategori kebutuhan (`cooked_meals`, `fresh_produce`, dll.) |
+| `food_type_name` | `VARCHAR(255)` | No | Label display jenis pangan |
+| `requested_portions` | `INTEGER` | No | CHECK (`requested_portions > 0`) |
+| `estimated_kg` | `DECIMAL(10,2)` | No | Standar konversi `portions * 0.35 kg` |
+| `beneficiary_count` | `INTEGER` | No | CHECK (`beneficiary_count > 0`) |
+| `beneficiary_group` | `VARCHAR(255)` | No | Misal: 'Pengungsi Banjir & Warga Terdampak' |
+| `target_location` | `TEXT` | No | Alamat posko tujuan pengiriman |
+| `urgency_level` | `ENUM` | No | `CRITICAL`, `HIGH`, `MEDIUM` |
+| `urgency_deadline` | `VARCHAR(255)` | No | Batas waktu pemenuhan (misal: 'Sebelum 12:30 WIB') |
+| `urgency_reason` | `TEXT` | No | Alasan urgensi (min 10 karakter) |
+| `contact_person` | `VARCHAR(255)` | No | Nama narahubung koordinator posko |
+| `contact_phone` | `VARCHAR(50)` | No | Nomor telepon aktif koordinator |
+| `notes` | `TEXT` | Yes | Catatan alergi / penanganan khusus |
+| `status` | `ENUM` | No | `OPEN`, `ALLOCATED`, `FULFILLED`, `CANCELLED` |
+| `matched_surplus_id` | `UUID` | Yes | FK ke `surplus_listings(id)` ON DELETE SET NULL |
+| `cancel_reason` | `TEXT` | Yes | Catatan saat dibatalkan |
+| `matched_at` | `TIMESTAMPTZ` | Yes | Waktu alokasi surplus donor |
+| `fulfilled_at` | `TIMESTAMPTZ` | Yes | Waktu makanan tiba di posko |
+| `cancelled_at` | `TIMESTAMPTZ` | Yes | Waktu pembatalan permohonan |
+| `is_deleted` | `BOOLEAN` | No | Default `false` (Penanda Tombstone soft-delete) |
+| `deleted_at` | `TIMESTAMPTZ` | Yes | Waktu soft delete |
+| `created_at` | `TIMESTAMPTZ` | No | Default `NOW()` |
+| `updated_at` | `TIMESTAMPTZ` | No | Auto update `NOW()` |
+
+---
+
+### 3.14. Entitas `emergency_broadcasts`
+Menyimpan siaran darurat berbatas waktu (*pull model*) yang dipublikasikan secara otomatis saat mitra posko membuat permohonan darurat.
+
+| Kolom | Tipe Data | Nullable | Keterangan & Constraints |
+|---|---|---|---|
+| `id` | `UUID` | No | Primary Key (`gen_random_uuid()`) |
+| `emergency_request_id` | `UUID` | No | Unique, FK ke `emergency_food_requests(id)` ON DELETE CASCADE |
+| `recipient_org_name` | `VARCHAR(255)` | No | Nama organisasi posko pemohon |
+| `recipient_location` | `VARCHAR(500)` | No | Lokasi tujuan pengantaran |
+| `needed_food_type` | `VARCHAR(100)` | No | Kategori pangan yang dibutuhkan |
+| `food_type_name` | `VARCHAR(255)` | Yes | Nama spesifikasi makanan |
+| `requested_portions` | `INTEGER` | No | Jumlah porsi yang diminta |
+| `target_quantity_kg` | `NUMERIC(10, 2)` | No | Estimasi bobot net (0.35 kg/porsi) |
+| `urgency_level` | `ENUM` | No | `CRITICAL` (<2h), `HIGH` (2-4h), `MEDIUM` (end of day) |
+| `urgency_deadline` | `VARCHAR(255)` | Yes | Label tenggat waktu |
+| `urgency_reason` | `TEXT` | No | Alasan kebutuhan mendesak |
+| `contact_person` | `VARCHAR(255)` | Yes | Nama narahubung posko |
+| `contact_phone` | `VARCHAR(50)` | Yes | Nomor telepon narahubung |
+| `radius_km` | `NUMERIC(5, 2)` | No | Radius broadcast default `10.0` km |
+| `expires_at` | `TIMESTAMPTZ` | No | Batas waktu kedaluwarsa otomatis siaran |
+| `status` | `ENUM` | No | `ACTIVE`, `RESPONDED`, `EXPIRED`, `FULFILLED`, `CANCELLED` |
+| `created_at` | `TIMESTAMPTZ` | No | Default `NOW()` |
+| `updated_at` | `TIMESTAMPTZ` | No | Auto update `NOW()` |
+
+---
+
+### 3.15. Entitas `supplier_broadcast_responses`
+Mencatat konfirmasi bantuan darurat yang diberikan oleh penyedia surplus/katering.
+
+| Kolom | Tipe Data | Nullable | Keterangan & Constraints |
+|---|---|---|---|
+| `id` | `UUID` | No | Primary Key (`gen_random_uuid()`) |
+| `broadcast_id` | `UUID` | No | FK ke `emergency_broadcasts(id)` ON DELETE CASCADE |
+| `supplier_org_id` | `UUID` | No | FK ke `organizations(id)` ON DELETE RESTRICT |
+| `supplier_org_name` | `VARCHAR(255)` | No | Nama badan katering/restoran donor |
+| `supplier_user_id` | `UUID` | No | FK ke `users(id)` ON DELETE RESTRICT |
+| `surplus_listing_id` | `UUID` | Yes | FK ke `surplus_listings(id)` (listing donasi darurat otomatis) |
+| `journey_id` | `UUID` | Yes | FK ke `rescue_journeys(id)` (perjalanan logistik otomatis) |
+| `status` | `ENUM` | No | `CONFIRMED`, `IN_TRANSIT`, `DELIVERED`, `CANCELLED` |
+| `responded_at` | `TIMESTAMPTZ` | No | Default `NOW()` |
+| `updated_at` | `TIMESTAMPTZ` | No | Auto update `NOW()` |
+
+> **Constraint Unik:** `UNIQUE (broadcast_id, supplier_org_id)` mencegah donor yang sama mengonfirmasi ganda siaran darurat yang sama.
+
+---
+
 ## 4. Strategi Indeks Basis Data & Pola Kueri
 
 | Nama Indeks | Tabel | Kolom | Rationale & Kueri Teroptimasi |
